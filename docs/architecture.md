@@ -15,6 +15,7 @@
 | `assets/dot_hands.json` | Recurso de puntos para las manos de DOTMATRIX. |
 | `tools/snap.py` | Simulación sin terminal interactiva y medición de modo más renderizado. |
 | `tools/verify.py` | Pruebas reutilizables de escenas y cierres a tres tamaños. |
+| `tools/preview.py` | Hojas PNG por fases para revisar composición y legibilidad; Pillow opcional. |
 | `scripts/install.py` | Instalación e integración personal. |
 | `integration/launcher/` | Lanzador para Omarchy. |
 | `integration/omarchy/` | Complemento de inactividad y parches del shell y menú. |

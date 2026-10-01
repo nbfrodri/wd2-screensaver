@@ -371,14 +371,14 @@ class BoxCity:
                                       -1 if px < x0 else (1 if px > x1 else 0),
                                       1 if py > y1 else (-1 if py < y0 else 0))
             q = min(12, max(0, int(ZC[it] / fog * 12)))
-            ecol = self.fogged(col, q, fog_col, edge_k)
-            dcol = self.fogged(blend(col, BLACK, 0.4), q, fog_col, edge_k)
+            ecol = self.fogged(blend(col, BLACK, 0.28), q, fog_col, edge_k)
+            dcol = self.fogged(blend(col, BLACK, 0.58), q, fog_col, edge_k)
             fcols = th.get("box_faces", {}).get(col, faces_c)
             if FAST[it]:
                 X, Y = SX[it], SY[it]
                 for kind, f in faces:
                     fc = fcols[0] if kind == "front" else fcols[1] if kind == "side" else fcols[2]
-                    fill_conv(s, [(X[k], Y[k]) for k in f], self.fogged(fc, q, fog_col))
+                    fill_conv(s, [(X[k], Y[k]) for k in f], self.fogged(blend(fc, col, 0.10), q, fog_col))
                 # Courses, mullions and roof seams belong to each projected face.
                 # Skip distant/subcell faces rather than laying noise over the camera.
                 if b[7] and d2 < 900:
@@ -386,7 +386,7 @@ class BoxCity:
                         A, B, C, D = [(X[k], Y[k]) for k in face]
                         width = math.dist(A, B)
                         height = math.dist(B, C)
-                        if width < 4 or height < 2:
+                        if width < 7 or height < 4:
                             continue
                         tc = self.fogged(blend(col, BLACK, 0.78), q, fog_col)
                         if kind == "top":
@@ -394,7 +394,7 @@ class BoxCity:
                                 seg(s, A[0]+(B[0]-A[0])*u, A[1]+(B[1]-A[1])*u,
                                     D[0]+(C[0]-D[0])*u, D[1]+(C[1]-D[1])*u, ":", tc)
                         else:
-                            floors = min(10, max(2, int((y1-y0)/2)))
+                            floors = min(10, max(2, int(height / 3)), max(2, int((y1-y0)/2)))
                             for j in range(1, floors):
                                 u = j/floors
                                 seg(s, A[0]+(D[0]-A[0])*u, A[1]+(D[1]-A[1])*u,
@@ -414,7 +414,7 @@ class BoxCity:
                     if len(poly) >= 3:
                         fc = fcols[0] if kind == "front" else fcols[1] if kind == "side" else fcols[2]
                         fill_conv(s, [(ccx + p[0] / p[2] * f2, ccy - p[1] / p[2] * f1) for p in poly],
-                                  self.fogged(fc, q, fog_col))
+                                  self.fogged(blend(fc, col, 0.10), q, fog_col))
                 for a, bb, dim in edges:
                     va, vb = Vv[a], Vv[bb]
                     if va[2] < NEAR and vb[2] < NEAR:
@@ -431,12 +431,12 @@ class BoxCity:
             if ws:
                 lcs = [self.fogged(c, q, fog_col, 0.8) for c in th.get("lit_cols", (lit_c,))]
                 nl = len(lcs)
-                dc = self.fogged(dark_c, q, fog_col)
+                dc = self.fogged(blend(dark_c, BLACK, 0.55), q, fog_col)
                 tk = int(tick)
                 for o0, base in ws:
                     for j, (rv, ph) in enumerate(base):
                         k = o0 + j
-                        if OK[k]:
+                        if OK[k] and (s.h >= 40 or ph % 3 == 0):
                             lit = rv < lit_p or (lit_p > 0.2 and (tk + ph) % 11 == 0)
                             y_, x_ = WSY[k], WSX[k]
                             rc[y_][x_] = "▪"

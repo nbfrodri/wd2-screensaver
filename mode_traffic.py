@@ -72,8 +72,10 @@ class Mode:
             span=wx if side==0 else wz
             for yy in range(3,int(hh),2):
                 for j in range(-int(span)+1,int(span),2):
-                    lit=(j+yy+int(x))%4!=0
-                    c=(135,135,113) if lit else (32,53,66)
+                    # A few occupied windows read as rooms; a bright checkerboard
+                    # competes with the cars and destroys the building silhouette.
+                    lit=(j+yy+int(x))%5<2
+                    c=((119,104,77) if x<0 else (89,115,128)) if lit else (39,49,58)
                     if side==0:
                         pts=[(x+j-.58,yy,z-wz-.08),(x+j+.58,yy,z-wz-.08),(x+j+.58,yy+1.25,z-wz-.08),(x+j-.58,yy+1.25,z-wz-.08)]
                     else:
@@ -104,14 +106,14 @@ class Mode:
         self.plane(s,0,0,33,30,(36,43,50),-.1)
         rng=random.Random(77)
         # Irregular wet asphalt aggregate and patched paving.
-        for _ in range(1300):
+        for _ in range(700):
             x,z=rng.uniform(-32,32),rng.uniform(-29,29)
-            self.plane(s,x,z,rng.uniform(.07,.7),rng.uniform(.05,.35),rng.choice([(43,50,57),(29,36,43),(49,56,63),(35,45,54)]),-.09)
+            self.plane(s,x,z,rng.uniform(.07,.45),rng.uniform(.05,.24),rng.choice([(40,47,54),(32,39,46),(43,50,57),(35,43,51)]),-.09)
         for x in (-19,19):
             for z in (-18,18):
-                self.box(s,x,z,12,11,.3,(86,86,83))
+                self.box(s,x,z,12,11,.3,(76,79,78))
                 for a in range(-11,12,2):
-                    for b in range(-10,11,2): self.plane(s,x+a,z+b,.94,.94,(94+(a+b)%9,94+(a+b)%9,88+(a+b)%9),.32)
+                    for b in range(-10,11,2): self.plane(s,x+a,z+b,.94,.94,(79+(a+b)%3,81+(a+b)%3,78+(a+b)%3),.32)
         for v in range(-29,30,4):
             if abs(v)>9:
                 self.plane(s,v,0,1,.09,(185,155,69))

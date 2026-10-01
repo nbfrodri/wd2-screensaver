@@ -52,13 +52,15 @@ Consulta [instalación y recuperación](docs/installation.md) para las copias de
 
 `integration/launcher/wd2-launch-screensaver` contiene el lanzador de terminal. `integration/omarchy/plugins/phobos.idle` contiene el complemento de inactividad adaptado. Los cambios puntuales del shell y del menú se conservan en `integration/omarchy/shell.patch.json` e `integration/omarchy/menu.patch.jsonc`. Son piezas de integración para Omarchy, no copias de toda la configuración del equipo.
 
-La comprobación breve se ejecuta con `/usr/bin/python3 tools/verify.py`; añade `--full` para recorrer 80 segundos simulados por modo.
+La comprobación breve se ejecuta con `/usr/bin/python3 tools/verify.py`; añade `--full` para recorrer 80 segundos simulados por modo. `tools/preview.py` crea hojas PNG por fases para revisar las siluetas; requiere Pillow y se explica en el documento de validación.
 
 Consulta [arquitectura](docs/architecture.md) y [validación](docs/validation.md) para el mapa del código y las comprobaciones registradas.
 
+El [handoff para Claude](handoff.md) conserva la evaluación visual, las prioridades pendientes y las instrucciones para continuar este pulido.
+
 ## Guardar futuras mejoras
 
-En esta máquina, el repositorio está en `/home/phobos/projects/wd2-screensaver`. La ruta de ejecución `~/.local/share/wd2-screensaver` es un enlace simbólico al repositorio, de modo que el lanzador sigue usando el mismo código. Después de revisar y probar cambios, puedes guardarlos con `git add`, `git commit` y `git push`. Los archivos del lanzador y del plugin se versionan bajo `integration/`; si los modificas en sus rutas instaladas, actualiza también esas copias antes de guardar. Los cambios futuros no se suben automáticamente.
+En esta máquina, el repositorio está en `/home/phobos/Projects/wd2-screensaver`. La ruta de ejecución `~/.local/share/wd2-screensaver` es un enlace simbólico al repositorio, de modo que el lanzador sigue usando el mismo código. Después de revisar y probar cambios, puedes guardarlos con `git add`, `git commit` y `git push`. Los archivos del lanzador y del plugin se versionan bajo `integration/`; si los modificas en sus rutas instaladas, actualiza también esas copias antes de guardar. Los cambios futuros no se suben automáticamente.
 
 ## Procedencia
 

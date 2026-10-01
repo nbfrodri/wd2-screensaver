@@ -31,22 +31,26 @@ class Mode:
 
     @staticmethod
     def word_points(count):
-        # A large original bitmap word, built entirely from halftone points.
+        # Broad angular stencil lettering: open counters, clipped corners and
+        # offset middle strokes remain readable even on a compact terminal.
         font={
-            'D':('11110','10001','10001','10001','10001','10001','11110'),
-            'E':('11111','10000','10000','11110','10000','10000','11111'),
-            'S':('01111','10000','10000','01110','00001','00001','11110'),
-            'C':('01111','10000','10000','10000','10000','10000','01111'),
+            'D':('111111100','111111110','110000111','110000011','110000011','110000011','000000011','110000011','110000011','110000011','110000111','111111110','111111100'),
+            'E':('111111111','111111111','110000000','110000000','110000000','111111100','011111100','110000000','110000000','110000000','110000000','111111111','111111111'),
+            'S':('001111111','011111111','111000000','110000000','110000000','011111100','001111110','000000011','000000011','000000011','000000111','111111110','111111100'),
+            'C':('001111111','011111111','111000000','110000000','110000000','110000000','000000000','110000000','110000000','110000000','111000000','011111111','001111111'),
         }
         dots=[]
         for letter,ch in enumerate('DEDSEC'):
             for row,line in enumerate(font[ch]):
                 for col,on in enumerate(line):
                     if on=='1':
-                        for yy in range(4):
-                            for xx in range(4):
-                                dots.append((.08+(letter*6+col+(xx+.5)/4)/35*.84,
-                                             .33+(row+(yy+.5)/4)/7*.34))
+                        for yy in range(3):
+                            for xx in range(3):
+                                # A modest forward rake; separate stencil
+                                # cuts never close the D counters or S waist.
+                                rake=(12-row)*.11
+                                dots.append((.075+(letter*11+col+(xx+.5)/3+rake)/65*.85,
+                                             .34+(row+(yy+.5)/3)/13*.32))
         ordered=np.array(sorted(dots,key=lambda p:(p[0],p[1])))
         selected=ordered[np.linspace(0,len(ordered)-1,count).astype(int)]
         # Match left to right, avoiding a meaningless cloud of crossing paths.
@@ -104,28 +108,39 @@ class Mode:
         for (cx,cy),mask in masks.items():
             s.put(cx,cy,chr(0x2800+mask),_PALETTE[max(0,min(255,levels[(cx,cy)]))])
 
-    def spark(self,s,t,strength=1):
-        # A rare contact spark occupies the empty gap, never becomes a HUD.
-        period=t%17
-        flash=max(0,1-abs(period-10.7)/.28)*strength
-        if flash<=0:return
-        cx=int(self.w*.475);cy=int(self.h*.5)
-        level=int(255*flash)
-        s.put(cx,cy,'+',_PALETTE[level])
-        if flash>.45:
-            s.put(cx-1,cy,'-',_PALETTE[int(level*.45)])
-            s.put(cx+1,cy,'-',_PALETTE[int(level*.45)])
-        if flash>.75:
-            s.put(cx,cy-1,'|',_PALETTE[int(level*.35)])
-            s.put(cx,cy+1,'|',_PALETTE[int(level*.35)])
+    def extras(self,t):
+        cycle=t%32
+        word=max(0,min(1,(cycle-9)/.7,(24-cycle)/.7))
+        word=word*word*(3-2*word)
+        if word:
+            # Detached broken ellipses frame the word, with ample clearance.
+            angle=np.linspace(0,math.tau,54,endpoint=False)
+            keep=(np.arange(54)%9<3)
+            angle=angle[keep]+t*.035
+            x=.5+.455*np.cos(angle)
+            y=.5+.255*np.sin(angle)
+            light=70+38*(.5+.5*np.sin(angle*3-t*.35))
+            # One brief travelling accent threads the detached fragments.
+            delta=(angle-t*.65+math.pi)%math.tau-math.pi
+            pulse=max(0,1-abs((cycle-12)%8-2)/1.1)
+            light=(light+48*np.exp(-(delta/.24)**2)*pulse)*word
+            return x,y,light
+        # The contact arc now fires during an actual hands interval.
+        flash=max(0,1-abs(cycle-2.6)/.65)
+        if not flash:return np.empty(0),np.empty(0),np.empty(0)
+        u=np.linspace(0,1,19)
+        x=.442+u*.061
+        y=.49-.014*np.sin(u*math.pi)+.003*np.sin(u*19+t*8)
+        return x,y,np.full(len(u),180*flash)
 
     def step(self,s,now):
         if self.start is None:self.start=now
         t=now-self.start
         x,y,lum=self.points(t)
+        ex,ey,el=self.extras(t)
+        x,y,lum=np.concatenate((x,ex)),np.concatenate((y,ey)),np.concatenate((lum,el))
         self.last=(x,y,lum)
         self.draw(s,x,y,lum)
-        if t%32<4 or t%32>=29:self.spark(s,t)
 
     def farewell(self,s,now,t):
         # Both hands yield their points to one brief spark, then complete black.
@@ -134,7 +149,8 @@ class Mode:
         x,y,lum=self.last
         collapse=min(1,(t/.82)**2)
         # Depth-dependent delay lets the contour peel away in coherent layers.
-        q=np.clip(collapse*(1.08+self.depth*.15),0,1)
+        depth=np.pad(self.depth,(0,len(x)-len(self.depth)))
+        q=np.clip(collapse*(1.08+depth*.15),0,1)
         xx=x+(.475-x)*q
         yy=y+(.5-y)*q
         brightness=lum*max(0,1-t*.7)

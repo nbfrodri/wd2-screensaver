@@ -398,7 +398,7 @@ class Mode:
         # glowing avenues
         for i in range(-2, 3):
             x = i * 30.0 + 11
-            col = DIM_PINK if i % 2 else (20, 50, 80)
+            col = (34, 10, 28) if i % 2 else (12, 25, 38)
             line3(s, cam, (x, 0, -far), (x, 0, far), col)
             line3(s, cam, (-far, 0, x), (far, 0, x), col)
         # ctOS rings around the tower
@@ -467,11 +467,11 @@ class Mode:
                     line3(s, cam, (ax, yy, az), (bx, yy, bz), rib)
                 for u in (.25, .5, .75):
                     xx, zz = ax+(bx-ax)*u, az+(bz-az)*u
-                    line3(s, cam, (xx, y0, zz), (xx, y1, zz), blend(col, WHITE, .12))
+                    line3(s, cam, (xx, y0, zz), (xx, y1, zz), blend(col, WHITE, .05))
                 if fb-fa > 2:
                     yy = min(y1, y0+FH*1.5)
-                    line3(s, cam, (ax, y0, az), (bx, yy, bz), blend(STEEL, CYAN, .2))
-                    line3(s, cam, (bx, y0, bz), (ax, yy, az), blend(STEEL, CYAN, .2))
+                    line3(s, cam, (ax, y0, az), (bx, yy, bz), blend(col, STEEL, .25))
+                    line3(s, cam, (bx, y0, bz), (ax, yy, az), blend(col, STEEL, .25))
                 # windows
                 la, lb = (ax * 0.97 + bx * 0.03, az * 0.97 + bz * 0.03), (bx * 0.97 + ax * 0.03, bz * 0.97 + az * 0.03)
                 A0, A1 = cam.proj((la[0], y0 + 0.55, la[1])), cam.proj((la[0], y1 - 0.65, la[1]))
@@ -480,6 +480,8 @@ class Mode:
                     continue
                 nfl = max(1, fb - fa - 1)
                 for fl in range(fa, fb):
+                    if s.h < 40 and fl % 2 and fl != self.broken:
+                        continue
                     u = (fl - fa) / nfl
                     pa = (A0[0] + (A1[0] - A0[0]) * u, A0[1] + (A1[1] - A0[1]) * u, A0[2])
                     if pa[1] < -4 or pa[1] > PH + 4:
@@ -502,9 +504,9 @@ class Mode:
                             if v < 0.35:
                                 wc = blend(col, BLACK, .55)
                             else:
-                                wc = (255, 214, 120) if v > 0.8 else blend(DIM_CYAN, CYAN, v)
+                                wc = (145, 125, 84) if v > 0.88 else blend(col, DIM_CYAN, 0.35 + v * 0.2)
                         else:
-                            wc = base if v > 0.15 else DIM_PINK
+                            wc = blend(col, base, 0.55) if v > 0.15 else blend(col, DIM_PINK, 0.3)
                         wc = cblend(wc, BLACK, 0.55 - 0.45 * lam)
                         wx = int(x0 + dxw * (j + 0.5))
                         wy = int(y0w + dyw * (j + 0.5))
