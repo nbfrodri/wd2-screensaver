@@ -1,0 +1,17 @@
+{
+  "idle": {
+    "screensaver": 150,
+    "lock": 300
+  },
+  "plugins": [
+    {
+      "id": "phobos.idle"
+    }
+  ],
+  "disabledPlugins": [
+    "omarchy.idle"
+  ],
+  "cloneSourceRestores": [
+    "phobos.idle"
+  ]
+}

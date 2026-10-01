@@ -1,0 +1,34 @@
+# Arquitectura
+
+`dedsec.py` descubre módulos, aplica la selección de configuración, coordina modos iniciales entre procesos mediante un archivo de reclamaciones con bloqueo, gestiona rotación y tamaño de terminal, y escribe los fotogramas ANSI. La selección forzada usa un solo modo. La clase `Saver` recrea la escena al cambiar el tamaño y aplica las transiciones sobre una instantánea del modo anterior.
+
+| Archivo | Responsabilidad |
+| --- | --- |
+| `config.py` | Valores predeterminados, plantilla y lectura de TOML del usuario. |
+| `lib.py` | Lienzo `Screen`, colores, primitivas, instantáneas y renderizado diferencial. |
+| `engine3d.py` | Cámara, proyección, recorte y geometría compartida. |
+| `widgets.py` | Paneles, partículas, rótulos y efectos compartidos. |
+| `transitions.py` | Glitch, CRT, VHS, datamosh y zoom entre escenas. |
+| `cinematic.py` | Utilidades comunes para las despedidas visuales. |
+| `sysdata.py` | Hilos de estadísticas, MPRIS, audio, notificaciones y meteorología. |
+| `mode_*.py` | Implementaciones de las 14 escenas. `mode_logo.py` publica DEDSEC. |
+| `assets/dot_hands.json` | Recurso de puntos para las manos de DOTMATRIX. |
+| `tools/snap.py` | Simulación sin terminal interactiva y medición de modo más renderizado. |
+| `tools/verify.py` | Pruebas reutilizables de escenas y cierres a tres tamaños. |
+| `scripts/install.py` | Instalación e integración personal. |
+| `integration/launcher/` | Lanzador para Omarchy. |
+| `integration/omarchy/` | Complemento de inactividad y parches del shell y menú. |
+
+## Contrato de una escena
+
+Cada módulo publica `NAME` y `Mode(w, h)`. `step(screen, now)` dibuja un fotograma; `farewell(screen, now, t)` dibuja el cierre, con progreso normalizado de cero a uno durante aproximadamente 0,8 segundos. La animación depende del tiempo recibido y puede probarse con una línea temporal simulada.
+
+`Screen` mantiene texto, fondo y dos píxeles verticales por celda. El texto tiene prioridad sobre los píxeles, y estos sobre el fondo. El renderizador compara con el fotograma anterior para reducir escrituras ANSI. La cuadrícula presupone un carácter de ancho simple por celda; `sysdata.display_text` sanea etiquetas externas antes de mostrarlas.
+
+Las escenas construyen geometría y texturas propias según su tamaño. DOTMATRIX interpola puntos entre las manos y el rótulo DEDSEC durante un ciclo de 32 segundos. Las despedidas conservan una instantánea de la escena para que su textura y composición participen del cierre.
+
+## Datos y ciclo de vida
+
+`DATA.start()` inicia fuentes habilitadas en hilos daemon. Los fallos de fuentes opcionales no detienen el dibujo. `DATA.stop()` termina los subprocesos de captura. MPRIS se consulta por D-Bus; las estadísticas usan datos del sistema; las notificaciones se cuentan en el historial local. El audio usa `parec` cuando está disponible y NumPy para analizar muestras en memoria. La meteorología usa HTTPS y una caché temporal.
+
+El programa restaura el modo de terminal y el cursor al salir. En una ventana gestionada de clase `org.omarchy.screensaver`, comprueba el foco de Hyprland y coordina el cierre de las ventanas del salvapantallas. La comprobación de foco falla de forma tolerante si Hyprland no está disponible.
