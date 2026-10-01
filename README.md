@@ -58,7 +58,7 @@ Consulta [arquitectura](docs/architecture.md) y [validación](docs/validation.md
 
 ## Guardar futuras mejoras
 
-En esta máquina, el repositorio está en `~/.local/share/wd2-screensaver`, junto al código en uso. Después de revisar y probar cambios, puedes guardarlos con `git add`, `git commit` y `git push`. Los archivos del lanzador y del plugin se versionan bajo `integration/`; si los modificas en sus rutas instaladas, actualiza también esas copias antes de guardar. Los cambios futuros no se suben automáticamente.
+En esta máquina, el repositorio está en `/home/phobos/projects/wd2-screensaver`. La ruta de ejecución `~/.local/share/wd2-screensaver` es un enlace simbólico al repositorio, de modo que el lanzador sigue usando el mismo código. Después de revisar y probar cambios, puedes guardarlos con `git add`, `git commit` y `git push`. Los archivos del lanzador y del plugin se versionan bajo `integration/`; si los modificas en sus rutas instaladas, actualiza también esas copias antes de guardar. Los cambios futuros no se suben automáticamente.
 
 ## Procedencia
 
