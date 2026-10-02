@@ -1,62 +1,103 @@
 # Validación
 
-Consulta la [revisión nocturna](polish-2026-10-02-night.md) y la
-[revisión anterior del 2 de octubre](polish-2026-10-02.md) para los
-resultados registrados, la comprobación de descubrimiento/rotación y las
-optimizaciones posteriores. Las cifras siguientes conservan su contexto histórico.
+## Estado comprobado
 
-Este documento registra la validación anterior comunicada para esta versión. Durante la preparación de esta copia y su documentación no se hizo una nueva comprobación visual en vivo: ya había un salvapantallas en ejecución y se evitó interferir con él.
+Última ejecución funcional y medición: **2 de octubre de 2026**, después del
+pulido visual de siete escenas. Esta actualización documental no vuelve a
+medir el programa.
 
-Al preparar el repositorio se ejecutó además `tools/verify.py`: sus 42 combinaciones de modo y tamaño, con comprobaciones de cierre, pasaron. El instalador se probó en un HOME temporal: vista previa sin escrituras, conservación de ajustes ajenos y configuración existente, lectura de JSONC, copias de seguridad y segunda instalación sin cambios.
+- Descubrimiento de los 14 modos sin omisiones ni avisos de importación.
+- `tools/verify.py --full`: 42 combinaciones superadas en 90×26, 175×45 y
+  240×60, con 80 segundos simulados y nueve progresos de despedida.
+- Revisión de PNG por fases de los 14 modos. HOLOGRAM se revisó de nuevo en
+  los tres tamaños, DRONE/TOWER/SCOUTX en 240×60 y PROFILER en 90×26;
+  también se inspeccionaron las hojas grandes de DEDSEC, PROFILER y HACKERSPACE.
 
-La última pasada registrada cubrió los 14 modos en tres tamaños de terminal: 42 comprobaciones en total, todas superadas. También se registró una simulación temporal de 80 segundos y comprobaciones de las despedidas, todas superadas. Las comprobaciones manuales mediante PTY cubrieron DOTMATRIX, TRAFFIC y WRENCH, junto con el cierre por pérdida de foco. Esto documenta el resultado comunicado; no sustituye una prueba visual nueva después de cambiar el entorno o el código.
+Las comprobaciones son sin interfaz: no certifican la fuente de Ghostty, la
+fluidez real, el foco, las fuentes de datos en vivo ni la suspensión. La
+[evaluación visual](visuals.md) recoge el diseño y las limitaciones actuales.
 
 ## Comprobaciones reutilizables
 
+Desde la raíz del repositorio, con el Python del sistema:
+
 ```sh
+/usr/bin/python3 dedsec.py --list
 /usr/bin/python3 tools/verify.py
 /usr/bin/python3 tools/verify.py --full
-/usr/bin/python3 tools/verify.py --mode mode_dotmatrix
+/usr/bin/python3 tools/verify.py --full --mode mode_dotmatrix
 ```
 
-La pasada breve dibuja 24 fotogramas por modo en 90 × 26, 175 × 45 y 240 × 60. Después prueba nueve progresiones de despedida. `--full` sustituye esos fotogramas por 101 pasos separados por 0,8 segundos, cubriendo una línea temporal simulada de 80 segundos. `--mode` limita la comprobación al módulo indicado y puede combinarse con `--full`.
+La prueba breve dibuja 24 fotogramas por combinación de modo y tamaño.
+`--full` usa 101 pasos separados por 0,8 segundos, hasta 80 segundos simulados.
+Ambas prueban nueve progresos de despedida y verifican que cada celda contiene
+un carácter imprimible de ancho simple. `--seed` permite cambiar la semilla
+procedural; por defecto es 24. No se inician fuentes en vivo ni acciones del
+escritorio.
 
-La herramienta verifica que las celdas de cada fotograma y las despedidas contienen un único carácter imprimible de ancho simple, además de ejecutar el dibujo y renderizado. No inicia fuentes en vivo ni acciones del escritorio. Estas comprobaciones detectan errores de ejecución y de cuadrícula; la apariencia, los cambios continuos entre muestras y la integración requieren revisión visual y una prueba interactiva.
-
-## Repetir una captura sin interfaz
-
-Usa el Python del sistema, que dispone de NumPy:
-
-```sh
-/usr/bin/python3 tools/snap.py mode_dotmatrix 175 45 1920 --show
-/usr/bin/python3 tools/snap.py mode_traffic 240 60 240
-/usr/bin/python3 tools/snap.py mode_wrench 175 45 240
-```
-
-El argumento es el nombre del módulo (`mode_logo` para DEDSEC), seguido de columnas, filas y número de fotogramas. La herramienta avanza tiempo simulado a 24 fps, mide 48 fotogramas adicionales y comunica milisegundos por fotograma para dibujo más renderizado. `--show` imprime el último fotograma como texto. No inicia las fuentes de datos reales ni verifica el foco, la restauración de terminal o la integración de escritorio.
+Tras cambiar el motor compartido o la integración, comprueba todos los modos.
+Para un cambio local, comprueba el modo afectado en los tres tamaños, sus fases
+tardías y el cierre. Revisa imágenes además de errores de ejecución.
 
 ## Revisión visual por fases
 
-La herramienta opcional `tools/preview.py` necesita Pillow (incluido en
-`requirements-dev.txt`) y una fuente local compatible. Crea PNG sin abrir
-ventanas ni iniciar fuentes de datos:
+`tools/preview.py` necesita Pillow, indicado en `requirements-dev.txt`, y una
+fuente local compatible. Genera hojas PNG sin abrir ventanas:
 
 ```sh
 /usr/bin/python3 tools/preview.py --mode mode_dotmatrix --times 0 2.6 6 12 26 31 --output /tmp/dotmatrix.png
-/usr/bin/python3 tools/preview.py --mode mode_traffic --width 175 --height 45 --times 0 7 12 --output /tmp/traffic.png
+/usr/bin/python3 tools/preview.py --mode mode_hologram --width 175 --height 45 --times 3 15 30 45 60 --output /tmp/hologram.png
 ```
 
-Su raster es una aproximación de la cuadrícula del terminal, con puntos braille
-dibujados explícitamente. No verifica la fuente real de Ghostty, CRT, foco ni
-restauración del terminal. `--font` permite elegir otra fuente instalada.
+Usa `--mode all` para incluir todas las escenas y `--font` para elegir otra
+fuente. La imagen aproxima la cuadrícula del terminal y dibuja los puntos
+braille explícitamente. No reproduce todos los efectos del terminal real.
+Algunos rótulos usan la hora real mientras la escena usa tiempo simulado;
+esto puede producir contadores de inactividad negativos en las previsualizaciones.
 
-La pasada de pulido posterior comprobó líneas temporales completas y cierres de
-DOTMATRIX, TRAFFIC, DRONE, TOWER y PROFILER a los tres tamaños. El ajuste final
-de los fragmentos orbitales de DOTMATRIX pasó comprobaciones de sus límites de
-fase y cierre. No se hizo una nueva prueba en vivo del escritorio.
+## Medir rendimiento
 
-## Rendimiento registrado
+```sh
+/usr/bin/python3 tools/snap.py mode_drone 175 45 240
+/usr/bin/python3 tools/snap.py mode_tower 240 60 240
+/usr/bin/python3 tools/snap.py mode_dotmatrix 90 26 240 --show
+```
 
-TEXTWALL y WRENCH son las escenas más costosas de las medidas comunicadas: aproximadamente 56 y 57 ms por fotograma a 240 × 60, respectivamente. A un tamaño habitual de 175 columnas se registraron aproximadamente 27 y 32 ms. Son mediciones de referencia de esta máquina, no garantías de rendimiento.
+Los argumentos son módulo, columnas, filas y fotogramas de preparación.
+La simulación avanza a 24 fps; después mide 48 fotogramas de dibujo y
+renderizado ANSI. `--show` imprime el último fotograma como texto.
+Mide en serie, sin otros procesos de previsualización o perfilado.
 
-El objetivo de 24 fps deja unos 41,7 ms por fotograma. Las dos escenas grandes pueden superar ese presupuesto; el bucle no espera cuando el trabajo ya ha consumido el intervalo, por lo que la tasa real baja. La escritura efectiva de la terminal y las fuentes en vivo pueden añadir trabajo que la captura sin interfaz no representa.
+## Rendimiento medido
+
+Se ejecutó `tools/snap.py` en serie, sin otras tareas de renderizado o pruebas:
+240 fotogramas de preparación y 48 de medición por muestra. Son tiempos de
+dibujo y generación ANSI; no incluyen toda la latencia del terminal ni son
+máximos de todas las fases. La hora y la aleatoriedad pueden cambiar la escena.
+Estas mediciones no son una comparación controlada antes/después.
+
+[CSV completo](performance-2026-10-02-review.csv). Valores en ms por fotograma;
+raya significa que ese tamaño no se midió en esta pasada.
+
+| Modo | 90×26 | 175×45 | 240×60 |
+| --- | ---: | ---: | ---: |
+| BOTNET | — | 23.9 | — |
+| DOTMATRIX | — | 15.6 | — |
+| DRONE | 20.1 | 34.0 | 48.7 |
+| GOLDENGATE | — | 29.8 | — |
+| HACKERSPACE | 17.2 | 36.3 | 63.9 |
+| HOLOGRAM | 18.7 | 40.0 | 42.7 |
+| DEDSEC | 5.9 | 17.1 | 29.1 |
+| NUDLE | — | 10.6 | — |
+| PROFILER | 10.1 | 22.1 | 33.9 |
+| SCOUTX | 4.5 | 13.4 | 22.4 |
+| TEXTWALL | — | 19.6 | — |
+| TOWER | 14.9 | 32.9 | 50.9 |
+| TRAFFIC | — | 10.9 | — |
+| WRENCH | — | 23.0 | — |
+
+A 175×45 todas las muestras quedan por debajo de 41,7 ms, el presupuesto de
+24 FPS, aunque HOLOGRAM (40,0 ms) tiene poco margen. DRONE, GOLDENGATE,
+HACKERSPACE, HOLOGRAM y TOWER superan el objetivo orientativo de 25 ms.
+A 240×60, DRONE (48,7 ms), HACKERSPACE (63,9 ms), HOLOGRAM (42,7 ms) y
+TOWER (50,9 ms) exceden el presupuesto de 24 FPS. Estos límites siguen pendientes de optimización.

@@ -24,6 +24,11 @@ añade los tiempos de 150 segundos para el salvapantallas y 300 para el bloqueo
 solamente si no estaban definidos. Conserva el resto de campos y plugins,
 incluido el bloqueo existente.
 
+El ajuste `idle.lock: false` en `~/.config/omarchy/shell.json` desactiva el
+bloqueo automático del plugin y mantiene el salvapantallas. El instalador
+respeta ese valor si ya existe. El bloqueo manual sigue siendo independiente:
+el salvapantallas no es una pantalla de seguridad.
+
 En el menú cambia únicamente la acción de `system.screensaver` a
 `$HOME/.local/bin/wd2-launch-screensaver force`. Lee JSONC con comentarios y
 comas finales; al escribir lo normaliza a JSON válido, por lo que los comentarios

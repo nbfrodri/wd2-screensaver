@@ -193,14 +193,16 @@ def sc_transamerica(w, h):
 
 def sc_coit(w, h):
     u, v, A = grid(w, h)
-    img = bands(v, SUNSET[::-1][2:] + SUNSET[:2], 0, 0.8)
-    img = bands(v, G((255, 170, 90), (110, 40, 120), 6), 0, 0.85)
+    img = bands(v, G((111, 141, 168), (229, 180, 133), 6), 0, 0.85)
     hill = ellipse(u, v, A, 0.5, 1.15, 0.85 / A * 1.0, 0.55)
     img[hill] = C((30, 80, 50))
-    img[hill & (((u * 41 + v * 29) * 5).astype(int) % 6 == 0)] = C((50, 120, 60))
+    img[hill & (v > .76 + .055 * np.sin(u * 18))] = C((27, 65, 44))
     tower = (np.abs(u - 0.5) < 0.06) & (v > 0.18) & (v < 0.64)
     img[tower] = C((240, 225, 190))
-    img[tower & (u > 0.52)] = C((200, 185, 150))
+    img[tower & (u > 0.52)] = C((174, 157, 127))
+    img[tower & (u < .475)] = C((255, 238, 197))
+    for tx in (.477, .502, .528):
+        img[tower & (np.abs(u - tx) < .004) & (v > .30)] = C((195, 178, 145))
     img[(np.abs(u - 0.5) < 0.075) & (v > 0.16) & (v < 0.2)] = C((240, 225, 190))
     arches = tower & (v > 0.2) & (v < 0.27) & ((u * w).astype(int) % 3 == 0)
     img[arches] = C((60, 40, 50))
@@ -212,29 +214,38 @@ def sc_coit(w, h):
 
 def sc_cablecar(w, h):
     u, v, A = grid(w, h)
-    img = bands(v, G((120, 180, 255), (250, 200, 220), 5), 0, 0.4)
-    bay = (v > 0.3) & (v < 0.42)
-    img[bay] = C((40, 90, 160))
-    img[bay & ellipse(u, v, A, 0.72, 0.34, 0.05, 0.03)] = C((90, 80, 70))
-    slope = 0.42 + (1 - u) * 0.12
-    img[v > slope] = C((90, 90, 100))
-    img[(v > slope) & (np.abs(v - slope - 0.18) < 0.012)] = C((160, 160, 170))
-    img[(v > slope) & (np.abs(v - slope - 0.3) < 0.012)] = C((160, 160, 170))
-    for x0, x1, c in ((0.0, 0.14, (180, 120, 140)), (0.86, 1.0, (120, 150, 190))):
-        b = (u >= x0) & (u < x1) & (v > 0.12)
-        img[b] = C(c)
-        img[b & ((u * w).astype(int) % 4 == 1) & ((v * h).astype(int) % 4 == 1)] = C((255, 240, 200))
-    # the car (sheared along slope)
-    cu0, cu1 = 0.3, 0.68
-    base = 0.42 + 0.5 * 0.12 + 0.24
-    car = (u > cu0) & (u < cu1) & (v < base) & (v > base - 0.3)
-    img[car] = C((200, 30, 40))
-    img[car & (v < base - 0.22)] = C((240, 220, 170))
-    img[car & (v > base - 0.2) & (v < base - 0.1) & (((u - cu0) * w).astype(int) % 5 > 0)] = C((255, 230, 150))
-    img[(u > cu0 - 0.02) & (u < cu1 + 0.02) & (v < base - 0.3) & (v > base - 0.33)] = C((90, 20, 30))
-    for wu in (0.36, 0.62):
-        img[ellipse(u, v, A, wu, base + 0.01, 0.03)] = C((20, 20, 25))
-    img[(np.abs(u - 0.49) < 0.003) & (v < base - 0.33) & (v > 0)] = C((40, 40, 40))
+    img = bands(v, G((92, 145, 186), (199, 201, 193), 5), 0, 0.48)
+    bay = (v > 0.32) & (v < 0.46)
+    img[bay] = C((48, 91, 123))
+    img[bay & (np.abs(v - 0.405) < 0.01)] = C((117, 152, 162))
+    # A downhill street: converging rails lead from the car to the bay.
+    road = v > 0.46
+    img[road] = C((77, 72, 72))
+    for side in (-1, 1):
+        edge = 0.5 + side * (0.13 + (v - 0.46) * 0.66)
+        rail = 0.5 + side * (0.025 + (v - 0.46) * 0.14)
+        img[road & (np.abs(u - edge) < 0.014)] = C((171, 159, 141))
+        img[road & (np.abs(u - rail) < 0.007)] = C((187, 183, 168))
+    for x0, x1, col in ((0, .19, (138, 104, 97)), (.81, 1, (102, 120, 135))):
+        facade = (u >= x0) & (u < x1) & (v > .15)
+        img[facade] = C(col)
+        img[facade & ((u * w).astype(int) % 5 == 1) & ((v * h).astype(int) % 5 == 2)] = C((214, 198, 157))
+    # Broad roof, distinct cream passenger cabin and solid red lower body.
+    body = (u > .24) & (u < .76) & (v > .43) & (v < .81)
+    img[body] = C((159, 37, 38))
+    img[body & (u > .68)] = C((104, 30, 34))
+    cabin = body & (v < .65)
+    img[cabin] = C((216, 191, 137))
+    for x0, x1 in ((.28, .39), (.43, .56), (.60, .70)):
+        pane = (u > x0) & (u < x1) & (v > .46) & (v < .61)
+        img[pane] = C((46, 64, 69))
+        img[pane & (v < .49)] = C((115, 144, 146))
+    img[(u > .21) & (u < .79) & (v > .39) & (v < .44)] = C((61, 38, 36))
+    img[body & (v > .65) & (v < .68)] = C((225, 185, 105))
+    img[(u > .23) & (u < .77) & (v > .79) & (v < .84)] = C((43, 33, 33))
+    for wu in (.32, .68):
+        img[ellipse(u, v, A, wu, .845, .035, .035)] = C((24, 26, 29))
+    img[(np.abs(u - .5) < .005) & (v < .39)] = C((55, 57, 62))
     return img
 
 
@@ -350,6 +361,11 @@ def material_photo(fn, w, h):
             img[detail] = C(blend((r,g,b), (95,140,177), .28))
         elif min(r,g,b)>90 and max(r,g,b)-min(r,g,b)<65:
             seam = mask & ((yy % 6 == 0) | ((xx + (yy//6%2)*3)%9 == 0))
+            # Sky gradients are atmosphere, not masonry.
+            if fn is sc_coit:
+                seam &= (np.abs(xx / max(1, w - 1) - .5) < .08) & (yy / max(1, h - 1) > .12)
+            elif fn is sc_cablecar:
+                seam &= yy / max(1, h - 1) > .44
             img[seam] = C(blend((r,g,b), BLACK, .14))
         elif g > r*1.25 and g > b*1.15:
             foliage = mask & (((xx//2)*17+(yy//2)*13)%11 < 3)
@@ -843,9 +859,9 @@ class Mode:
         if random.random() < 0.5:
             self.spawn_heart(random.uniform(s.w * 0.75, s.w - 6), self.bottom * 2 - 6)
         # big double-tap heart
-        if age < 1.2:
-            sc = max(1, int(1 + ease_out(age / 0.4) * (3 if s.h > 30 else 2)))
-            col = blend(WHITE, PINK, age / 1.2)
+        if age < .8:
+            sc = max(1, int(1 + ease_out(age / .25)))
+            col = blend(WHITE, PINK, age / .8)
             hw, hh = len(BIG_HEART[0]) * sc, len(BIG_HEART) * sc
             ox, oy = s.w // 2 - hw // 2, (self.top + self.bottom) - hh // 2
             for j, row in enumerate(BIG_HEART):

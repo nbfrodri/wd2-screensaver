@@ -913,13 +913,18 @@ class Mode:
             m = (fu < np.maximum(0.04, pp / 1.5 * 0.8)) | (fv < np.maximum(0.04, pp / 1.5 * 0.8))
             stain = (0.9 + 0.1 * np.sin(u * 1.3 + 2) * np.sin(v * 1.7)).astype(np.float32)[:, None]
             a = np.where(m[:, None], np.float32([62, 56, 64]), np.float32([104, 96, 104]) * stain)
-            # rug: concentric geometric bands
+            # Woven rug: muted dyes sit below the neon and monitor light.
             rug = (u > -3.6) & (u < 4.2) & (v > 4.4) & (v < 10.2)
             if rug.any():
                 e = np.minimum(np.minimum(u - -3.6, 4.2 - u), np.minimum(v - 4.4, 10.2 - v))[rug]
                 band = (np.floor(e / 0.28).astype(np.int32)) % 4
-                rp = np.float32([(180, 40, 100), (60, 34, 110), (220, 150, 60), (60, 34, 110)])
-                a[rug] = rp[band]
+                rp = np.float32([(112, 40, 72), (44, 34, 68), (140, 104, 62), (44, 34, 68)])
+                ru, rv = u[rug], v[rug]
+                # Fade the weave below pixel size, so distant fabric stays calm.
+                weave = ((np.floor(ru * 14) + np.floor(rv * 14)) % 2 - .5)
+                detail = np.clip(1 - pp[rug] * 18, 0, 1)
+                wear = .93 + .045 * np.sin(ru * 1.7) * np.sin(rv * 2.1)
+                a[rug] = rp[band] * (wear + weave * detail * .08)[:, None]
             alb[floor] = a
         if ceil.size:
             v = hz[ceil]

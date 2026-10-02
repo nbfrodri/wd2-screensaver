@@ -12,7 +12,7 @@ import time
 from lib import (BLACK, CYAN, DIM_CYAN, GREY, PINK, PURPLE, WHITE, YELLOW, Glitch, blend,
                  pulse)
 from sysdata import DATA
-from widgets import SHAPES, Particles, PostFX, rot
+from widgets import SHAPES, Particles, rot
 
 NAME = "HOLOGRAM"
 
@@ -22,9 +22,9 @@ SKULL = [
     "...XXXXXXXXXXXXXXXX...",
     "..XXXXXXXXXXXXXXXXXX..",
     ".XXXXXXXXXXXXXXXXXXXX.",
-    ".XXXX.X...XX...X.XXXX.",
-    ".XXXXX.X.XXXX.X.XXXXX.",
-    ".XXXX.X...XX...X.XXXX.",
+    ".XXX......XX......XXX.",
+    ".XXX......XX......XXX.",
+    ".XXXX....XXXX....XXXX.",
     ".XXXXXXXXX..XXXXXXXXX.",
     "..XXXXXXXX..XXXXXXXX..",
     "...XXXXXX....XXXXXX...",
@@ -150,7 +150,6 @@ class Mode:
     def __init__(self, w, h):
         self.w, self.h = w, h
         self.glitch = Glitch(0.012)
-        self.fx = PostFX(band_speed=5)
         self.particles = Particles()
         shapes = [build_skull(), build_mask(), build_letters()]
         self.counts = [len(v) for v in shapes]
@@ -174,11 +173,15 @@ class Mode:
         self.ghosts = []
         self.flick_hist = [0.5] * 24
         self.zoom = self.scale
-        self.voxel_palette = [[blend(BLACK, col, (k + 3) / 18) for k in range(16)]
-                              for col in ((0, 150, 190), (90, 240, 255), (255, 120, 200))]
+        self.voxel_palette = [[blend(BLACK, col, (k + 5) / 20) for k in range(16)]
+                              for col in ((0, 110, 145), (90, 240, 255), (255, 150, 220))]
+        self.mask_palette = [[blend(col, BLACK, .52 * level / 16)
+                              for col in self.voxel_palette[1]] for level in range(17)]
+        self.accent_palette = [blend(col, WHITE, .32) for col in self.voxel_palette[2]]
         self.voxel_shading = {col: (blend(col, WHITE, 0.25), blend(col, BLACK, 0.35),
                                     blend(col, BLACK, 0.8))
-                              for palette in self.voxel_palette for col in palette}
+                              for palette in self.voxel_palette + self.mask_palette + [self.accent_palette]
+                              for col in palette}
         sk = skull_cells()
         mk = mask_cells()
         lt = letter_cells()
@@ -576,6 +579,9 @@ class Mode:
         kz = self.zoom
         cx0, cy0 = self.cx, self.cy
         pal = self.voxel_palette
+        mask_weight = (1.0 if self.cur == 1 else 0.0) if mt is None else (
+            (1 - mt) * (self.cur == 1) + mt * (self.nxt == 1))
+        face_palette = self.mask_palette[round(mask_weight * 16)]
         ghosts = []
         tear = {}
         for Z, X, Y, kind, arc in pts:
@@ -585,7 +591,7 @@ class Mode:
             if glitch:
                 band = spy >> 2
                 if band not in tear:
-                    tear[band] = random.randint(-6, 6) if random.random() < 0.25 else 0
+                    tear[band] = random.randint(-2, 2) if random.random() < 0.18 else 0
                 sx += tear[band]
             if arc > 0.08:
                 # dissolved: a single bright mote with a faint wake
@@ -602,19 +608,27 @@ class Mode:
                 if row[sx] is None:
                     row[sx] = blend(col, BLACK, 0.6)
                 continue
-            light = (1 - (Z + 12) / 24) * flick
-            col = pal[min(2, kind)][max(0, min(15, int(light * 12)))]
+            light = (0.88 - Z / 55) * flick
+            index = max(0, min(15, int(light * 12)))
+            col = pal[min(2, kind)][index]
+            # A low-light mask plate supports the luminous X eyes and grille.
+            # Solid front faces share a surface; beveling every voxel used to
+            # turn the eyes/jaw into an unreadable masonry grid.
+            if kind == 1:
+                col = face_palette[index]
+            if kind == 2:
+                col = self.accent_palette[index]
             hi, lo, ghost = self.voxel_shading[col]
             x0, y0 = sx - hx, spy - hy
             for py in range(max(0, y0), min(PH, y0 + bph)):
                 row = hb[py]
                 if row is None:
                     row = hb[py] = [None] * W
-                c = hi if py == y0 else col
+                c = hi if kind == 0 and py == y0 else col
                 left, right = max(0, x0), min(W, x0 + bw)
                 if left < right:
                     row[left:right] = [c] * (right - left)
-                    if right == x0 + bw:
+                    if kind == 0 and right == x0 + bw:
                         row[right - 1] = lo
             if len(ghosts) < 260 and kind != 0 and 0 <= sx < W and 0 <= spy < PH:
                 ghosts.append((sx, spy, ghost))
@@ -638,7 +652,7 @@ class Mode:
                 c = row[x]
                 b = layer[x] or BLACK
                 if abs(py - roll_line) < 2:
-                    c = blend(c, WHITE, 0.5)
+                    c = blend(c, WHITE, 0.22)
                 layer[x] = (int(b[0] + (c[0] - b[0]) * a), int(b[1] + (c[1] - b[1]) * a), int(b[2] + (c[2] - b[2]) * a))
                 crow[x] = " "
 
@@ -673,10 +687,9 @@ class Mode:
         s.text(self.w - len(st) - 2, 0, st, PINK)
         s.center(self.h - 2, "> WE ARE DEDSEC. WE SEE EVERYTHING. <", blend(PINK, WHITE, pulse(now, 3) * 0.5))
         self.backfill(s)
-        # The model already has scanlines and an emitter sweep; a second
-        # full-screen white band would hide the facial landmarks.
-        if glitch:
-            self.fx.apply(s, now, True)
+        # Interference belongs to the projected voxels (the bounded tear above).
+        # Keep the room and telemetry stable so the emitter reads as a physical
+        # object, and never cover an entire face with opaque CRT colour bands.
 
     @staticmethod
     def backfill(s):

@@ -2,19 +2,19 @@
 
 ## Working context
 
-- Read `handoff.md` first, then `README.md` and relevant files under `docs/`.
-  The newest handoff section supersedes historical observations below it.
+- Read `README.md` and the relevant guides under `docs/` before editing.
+  `docs/validation.md` records the latest verified state and measurement limits.
 - Canonical checkout: `/home/phobos/Projects/wd2-screensaver` (capital P).
   `~/.local/share/wd2-screensaver` is a symlink to this checkout on this machine.
 - User-facing explanations and documentation are in Spanish. Code comments
-  and agent handoffs may use English.
+  may use English.
 - Inspect `git status`/`git diff` before editing. Preserve unfinished work by
   other assistants; never reset a mode merely because its diff is large.
-- Update the handoff as work completes: changes, actual tests, timings and
-  remaining limitations. Do not leave completed tasks marked in progress.
-- For delegated work, use the user's requested model. Current Codex preference
-  is `gpt-6.1-sol` with low reasoning effort. Give each agent disjoint mode files;
-  keep shared modules, docs and final integration with the main agent.
+- Update the relevant existing guide when behavior or validation changes.
+  Keep documentation current; avoid duplicate session reports and stale task logs.
+- If delegation is authorized, respect the user's model preference and give
+  each agent disjoint mode files. Keep shared modules, docs and integration
+  with the main agent.
 
 ## Visual and data rules
 

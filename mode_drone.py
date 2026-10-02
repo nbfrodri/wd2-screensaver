@@ -491,18 +491,18 @@ class FastFX:
             self.cache.clear()
         span = s.h + 16
         by = int((now * self.band_speed) % span) - 8
-        for k, t in ((0, 0.16), (-1, 0.08), (1, 0.08)):
+        for k, t in ((0, 0.045),):
             self.tint(s, by + k, WHITE, t)
         if glitch:
-            for _ in range(random.randint(2, 5)):
+            for _ in range(random.randint(1, 2)):
                 y0 = random.randrange(s.h)
-                dx = random.randint(-14, 14)
+                dx = random.randint(-4, 4)
                 col = random.choice((PINK, CYAN))
-                for y in range(y0, min(s.h, y0 + random.randint(1, 4))):
+                for y in range(y0, min(s.h, y0 + 1)):
                     s.shift_row(y, dx)
-                    self.tint(s, y, col, 0.5)
+                    self.tint(s, y, col, 0.16)
             if random.random() < 0.3:
-                s.noise_lines(2)
+                s.noise_lines(1)
 
 
 # ====================================================================== drone city dressing
@@ -1237,7 +1237,7 @@ class Mode:
                 fk = min(0.9, (va[2] + vb[2]) / 2 / fog)
                 glass = blend(blend(sky_glass, fc, fk), self.mat_faces[b[6]][1], 0.25)
                 fid = len(meta)
-                pal.extend((None, glass, blend(glass, WHITE, 0.06), blend(warm0, fc, fk * 0.8),
+                pal.extend((None, glass, blend(blend(self.mat_faces[b[6]][1], BLACK, .38), fc, fk), blend(warm0, fc, fk * 0.8),
                             blend((150, 210, 255), fc, fk * 0.8), blend(shop0, fc, fk)))
                 params.append((A, B, C, D, E, F, G, J, K, u0 * L / dec["fw"], (u1 - u0) * L / dec["fw"], floors, sub,
                                dec["seed"], 1.0 if dec["shop"] else 0.0, fid * 6))
@@ -1284,13 +1284,15 @@ class Mode:
         upper = inside & (wv0 >= 1) & (wv0 < flo - 0.25) & (fu > .28) & (fu < .70) & (fv > .34) & (fv < .70)
         gu, gv = wu0 - np.floor(wu0), wv0 - np.floor(wv0)
         shop = inside & (rep(cols[14]) > 0) & (wv0 < 1) & (gv > .12) & (gv < .72) & (gu > .18) & (gu < .78)
-        hsh = iu.astype(np.int32) * 7919 + iv.astype(np.int32) * 104729 + np.repeat(np.array(cols[13], dtype=np.int32), counts)
-        hsh = ((hsh * 40503) >> 6) & 1023
         room = (np.floor(wu0).astype(np.int32) * 7919 + np.floor(wv0).astype(np.int32) * 104729
                 + np.repeat(np.array(cols[13], dtype=np.int32), counts))
         room = ((room * 40503) >> 6) & 1023
         lit = upper & (room < lit_p * 1024)
-        k = np.where(upper, np.where(lit, np.where((room & 7) == 0, 4, 3), np.where((hsh & 3) == 0, 2, 1)), 0)
+        k = np.where(upper, np.where(lit, np.where((room & 7) == 0, 4, 3), 1), 0)
+        # Physical spandrel belts anchor the illuminated rooms to stacked floors.
+        # Only resolve them when a floor is tall enough; distant blocks stay quiet.
+        belt = inside & (floor_px > 5.5) & (wv0 >= 1) & (gv > .82)
+        k = np.where(belt, 2, k)
         k = np.where(shop, 5, k)
         k = np.where(k > 0, k + np.repeat(np.array(cols[15], dtype=np.int32), counts), 0)
         flat = k.tolist()
@@ -1461,7 +1463,7 @@ class Mode:
             col = YELLOW if int(now * 5) % 2 else PINK
             s.center(cy + bh // 2 + 2 if not small else cy + bh // 2 + 1, "[ %s ]" % msg, col)
         if boost:
-            s.center(cy - bh // 2 - 2, ">>> CRASH ZOOM <<<", PINK if int(now * 8) % 2 else WHITE)
+            s.center(cy - bh // 2 - 2, "[ TARGET LOCK ]", PINK)
 
     def siren(self, s, now, t):
         """Red/blue strobes on the screen edges."""
@@ -1500,14 +1502,16 @@ class Mode:
         boost = 0.0
         cam = self.cam
         z = cam.pos[2]
-        clear_ahead = not (self.tunnel and self.tunnel[0] - z < 160) and not self.bridge
-        if self.zoom_t is None and now > self.next_zoom and self.police is None and clear_ahead:
+        clear_ahead = not (self.tunnel and self.tunnel[0] - z < 85) and not (
+            self.bridge and abs(self.bridge - z) < 95)
+        panel_near = self.board_z is not None and 0 < self.board_z - z < 65
+        if self.zoom_t is None and (now > self.next_zoom or panel_near) and self.police is None and clear_ahead:
             # Crash zoom: lock onto a DedSec billboard ahead and dive straight at it.
             self.zoom_t = now
             self.zoom_z0 = z
-            self.board_z = z + 70
+            self.board_z = self.board_z if panel_near and self.board_z - z > 45 else z + 70
             self.glitch.trigger(now, 0.15)
-            self.callout = ("BILLBOARD HACKED", now)
+            self.callout = ("ACQUIRING BILLBOARD", now)
         zoom_u = None
         if self.zoom_t is not None:
             zt = now - self.zoom_t
@@ -1516,22 +1520,31 @@ class Mode:
                 zoom_u = zt / self.ZOOM_T
             elif zt < self.ZOOM_T + 0.06 and not self.zoom_hit:
                 self.zoom_hit = True
+                self.callout = ("BILLBOARD HIJACKED", now)
                 self.flash = now
                 self.glitch.trigger(now, 0.35)
                 self.particles.burst(self.w / 2, self.h / 2, 90, colors=(PINK, WHITE, CYAN), speed=34)
             if zt > self.ZOOM_T + 0.5:
                 self.zoom_t = None
                 self.zoom_hit = False
-                self.board_z = cam.pos[2] + random.uniform(110, 150)
                 self.next_zoom = now + random.uniform(11, 17)
+                self.board_z = cam.pos[2] + 14 * (self.next_zoom - now) + 65
         police_t = None
         if self.police is not None:
             police_t = now - self.police
         chase = 0.0 if police_t is None else min(1.0, police_t / 1.5, max(0.0, (13 - police_t) / 1.5))
         if zoom_u is not None:
             # Ease-in dive that stops just short of the panel, then punches through.
-            target = self.board_z - 4.0
-            nz = self.zoom_z0 + (target - self.zoom_z0) * zoom_u ** 2.4
+            # Acquire the complete panel and its supporting legs before the
+            # brief punch-in. Fit both screen aspect ratios, not a fixed distance.
+            fit = max(30.0, self.h * .85 * 17.4 / (self.h * .66),
+                      self.h * .85 * 46.8 / (self.w * .76))
+            acquire = min(1.0, zoom_u / .62)
+            acquire = acquire * acquire * (3 - 2 * acquire)
+            nz = self.zoom_z0 + (self.board_z - fit - self.zoom_z0) * acquire
+            if zoom_u > .88:
+                punch = ((zoom_u - .88) / .12) ** 2
+                nz += (fit - 6.0) * punch
             self.speed = max(14.0, (nz - cam.pos[2]) / max(dt, 1e-3)) if dt > 0 else self.speed
             cam.pos[2] = nz
             self.dist += max(0.0, self.speed * dt)
@@ -1539,7 +1552,7 @@ class Mode:
             self.speed = 14 + boost * 40 + chase * 10
             cam.pos[2] += self.speed * dt
             self.dist += self.speed * dt
-        self.cam.f = self.h * (0.85 + (0.25 * zoom_u if zoom_u is not None else 0.0))
+        self.cam.f = self.h * 0.85
         z = cam.pos[2]
         # Cruise above the street canyon, looking down at traffic; dive for set pieces.
         alt = 21.0 + math.sin(t * 0.23) * 3.5 + math.sin(t * 0.09) * 2.0
@@ -1571,7 +1584,7 @@ class Mode:
             dz = max(4.0, self.board_z - z)
             cam.yaw *= 1 - e
             cam.roll = cam.roll * (1 - e) + random.uniform(-0.015, 0.015) * zoom_u
-            cam.pitch = cam.pitch * (1 - e) + math.atan2(cam.pos[1] - 12.0, dz) * e
+            cam.pitch = cam.pitch * (1 - e) + math.atan2(cam.pos[1] - 10.0, dz) * e
 
         self.sky(s, now)
         if th["day"] < 0.3:
@@ -1677,8 +1690,8 @@ class Mode:
             self.reflections(s, now)
             self.rain_fx(s, dt)
         self.particles.step(s, dt)
-        if boost > 0.4:
-            for _ in range(int(boost * 25)):
+        if zoom_u is not None and zoom_u > .88:
+            for _ in range(int(boost * 10)):
                 a = random.uniform(0, math.tau)
                 r0 = random.uniform(8, 20)
                 x0, y0 = self.w / 2 + math.cos(a) * r0 * 2, self.h / 2 + math.sin(a) * r0
@@ -1693,7 +1706,7 @@ class Mode:
             if ft >= 1:
                 self.flash = None
             else:
-                a = round((1 - ft) * 0.85, 2)
+                a = round((1 - ft) * 0.38, 2)
                 for y in range(self.h):
                     self.fx.tint(s, y, blend(WHITE, PINK, ft), a)
                 if ft < 0.7:

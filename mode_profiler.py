@@ -754,10 +754,11 @@ class Mode:
             return
         x0, y0, col = self.link
         cx, cy, cw, ch = self.card_rect
-        if x0 >= cx:
+        if cx <= x0 < cx + cw:
             return
-        x1, y1 = cx - 1, max(cy + 1, min(cy + ch - 2, y0))
-        elbow = x1 - max(4, (x1 - x0) // 3)
+        side = -1 if x0 < cx else 1
+        x1, y1 = (cx - 1 if side < 0 else cx + cw), max(cy + 1, min(cy + ch - 2, y0))
+        elbow = x1 + side * max(4, abs(x1 - x0) // 3)
         pts = line_points(x0, y0, elbow, y0) + line_points(elbow, y0, x1, y1)[1:]
         head = int(now * 30) % max(1, len(pts))
         for i, (x, y) in enumerate(pts):
@@ -810,29 +811,63 @@ class Mode:
             "status": status,
             "intel": random.sample(INTEL, 2),
             "action": random.choice(ACTIONS).replace("%d", str(random.randint(20, 900))),
-            "portrait": self.identicon(),
             "color": random.choice((PINK, CYAN, YELLOW, GREEN)),
         }
+        self.profile["portrait"] = self.citizen_portrait(
+            name, self.profile["age"], ped["body"] if ped else None)
         self.started = now
         self.history = ([name] + self.history)[:6]
         self.scanned += 1
         self.glitch.trigger(now, 0.25)
 
     @staticmethod
-    def identicon():
+    def citizen_portrait(name, age, clothes=None):
+        """Offline fictional booking portrait, stable for the same identity."""
+        rng = random.Random(sum((i + 1) * ord(c) for i, c in enumerate(name)) + age * 97)
+        skin = rng.choice(((212, 173, 142), (170, 124, 94), (111, 77, 61), (231, 197, 165)))
+        hair = rng.choice(((27, 25, 29), (64, 43, 32), (100, 75, 46))) if age < 60 else (112, 115, 118)
+        cloth = clothes or rng.choice(CLOTHES)
+        fringe = rng.randrange(3)
+        glasses = rng.random() < 0.3
+        beard = age > 24 and rng.random() < 0.3
         rows = []
-        for _ in range(8):
-            half = [random.random() < 0.5 for _ in range(4)]
-            rows.append(half + half[::-1])
+        for y in range(16):
+            row = []
+            for x in range(16):
+                col = blend((9, 26, 32), (3, 10, 18), y / 20)
+                dx = x - 7.5
+                if 12 <= y and abs(dx) <= 3 + (y - 12) * 1.4:
+                    col = blend(cloth, BLACK, 0.48 + max(0, dx) * 0.035)
+                    if abs(dx) < 1 and y >= 13:
+                        col = blend(col, BLACK, 0.4)
+                if 10 <= y <= 12 and 6 <= x <= 9:
+                    col = blend(skin, BLACK, 0.32)
+                if ((dx / 4.2) ** 2 + ((y - 6) / 5.0) ** 2 <= 1):
+                    col = blend(skin, BLACK, 0.12 + max(0, dx) * 0.065)
+                    if y <= 3 or (y == 4 and (x < 6 + fringe or x > 10)) or (x in (4, 11) and y < 8):
+                        col = blend(hair, WHITE, 0.12 if dx < 0 else 0)
+                    if y == 6 and x in (6, 9):
+                        col = (20, 27, 31)
+                    if glasses and ((y in (5, 7) and x in (5, 6, 9, 10)) or
+                                    (y == 6 and x in (4, 5, 7, 8, 10, 11))):
+                        col = (36, 53, 62)
+                    if x == 8 and 7 <= y <= 8:
+                        col = blend(skin, WHITE if y == 7 else BLACK, 0.2)
+                    if y == 9 and 6 <= x <= 9:
+                        col = blend(skin, (48, 25, 29), 0.65)
+                    elif beard and y >= 9:
+                        col = blend(col, hair, 0.55)
+                row.append(blend(col, CYAN, 0.10))
+            rows.append(row)
         return rows
 
     def draw_card(self, s, now):
         elapsed = now - self.started
         p = self.profile
         card_w = min(64, self.w - 6)
-        card_h = 18
+        card_h = 16 if self.w <= 110 else 18
         slide = (1 - min(1.0, elapsed / 0.4)) ** 3
-        cx = self.w - card_w - 3 + int(slide * (card_w + 6)) if self.w > 140 else (self.w - card_w) // 2
+        cx = self.w - card_w - 3 + int(slide * (card_w + 6))
         cy = min(self.h - card_h - 3, max(3, (self.h - card_h) // 2 + 4))
         self.card_rect = (cx, cy, card_w, card_h)
         col = p["color"]
@@ -841,15 +876,18 @@ class Mode:
             row = s.bg[yy]
             for xx in range(max(0, cx + 1), min(self.w, cx + card_w - 1)):
                 row[xx] = PANEL_BG
+                s.ch[yy][xx] = " "
+                s.pt[yy][xx] = s.pb[yy][xx] = None
 
-        reveal = min(8, int(elapsed * 6))
-        for r in range(8):
-            for c in range(8):
-                if r < reveal:
-                    ch = "██" if p["portrait"][r][c] else "  "
-                else:
-                    ch = random.choice(("▒▒", "░░", "  "))
-                s.text(cx + 3 + c * 2, cy + 2 + r, ch, col if r < reveal else GREY)
+        reveal = min(16, int(elapsed * 12))
+        for r in range(16):
+            for c in range(16):
+                color = p["portrait"][r][c] if r < reveal else (11, 23, 31)
+                if r == reveal - 1 and reveal < 16:
+                    color = blend(color, col, 0.55)
+                elif r % 2:
+                    color = blend(color, BLACK, 0.12)
+                s.pixel(cx + 3 + c, 2 * (cy + 2) + r, color)
         s.text(cx + 3, cy + 11, "ID#%08X" % (hash(p["name"]) & 0xFFFFFFFF), GREY)
 
         def typed(text, start):
@@ -859,20 +897,21 @@ class Mode:
         fields = [("NAME", p["name"], WHITE), ("AGE", str(p["age"]), WHITE), ("OCCUPATION", p["job"], WHITE),
                   ("INCOME", p["income"], GREEN), ("STATUS", p["status"][0], p["status"][1])]
         for i, (k, v, c) in enumerate(fields):
-            s.text(fx, cy + 2 + i, k.ljust(11), GREY)
-            s.text(fx + 11, cy + 2 + i, typed(v, 0.3 + i * 0.25), c)
+            s.text(fx, cy + 2 + i, k.ljust(11), (112, 125, 142))
+            s.text(fx + 11, cy + 2 + i, typed(v, 0.3 + i * 0.25)[:card_w - 35], c)
         width = card_w - 25
         for i, line in enumerate(p["intel"]):
             s.text(fx, cy + 8 + i, typed("» " + line, 1.8 + i * 0.8)[:width], YELLOW)
         if elapsed > 3.2:
-            s.text(fx, cy + 11, "[ HACK: %s ]" % p["action"], PINK if int(now * 4) % 2 else WHITE)
+            s.text(fx, cy + 11, ("[ HACK: %s ]" % p["action"])[:width], PINK if int(now * 4) % 2 else WHITE)
         bar_w = card_w - 6
         prog = min(1.0, elapsed / 4.5)
-        s.text(cx + 3, cy + 14, "ANALYZING ", GREY)
+        bar_y = cy + card_h - 4
+        s.text(cx + 3, bar_y, "ANALYZING ", GREY)
         filled = int((bar_w - 10) * prog)
-        s.text(cx + 13, cy + 14, "█" * filled + "░" * (bar_w - 10 - filled), col)
+        s.text(cx + 13, bar_y, "█" * filled + "░" * (bar_w - 10 - filled), col)
         if prog >= 1:
-            s.text(cx + 3, cy + 15, "PROFILE COMPLETE // UPLOADED TO DEDSEC", GREEN)
+            s.text(cx + 3, bar_y + 1, "PROFILE COMPLETE // UPLOADED TO DEDSEC"[:bar_w], GREEN)
 
     # ------------------------------------------------------------ frame
     def step(self, s, now):

@@ -1129,7 +1129,7 @@ class Mode:
         atk = max(0.0, self.p - self.broken) if self.t >= INTRO else 0.0
         for L in range(self.broken, min(NF, self.broken + 3)):
             dist = L - self.broken
-            vis = (1.0, 0.75, 0.45)[dist] * intro
+            vis = (1.0, 0.38, 0.18)[dist] * intro
             yc, Rs, rot, V, E = self.shield_geo(L, now)
             x0, x1 = self.xrange_of(V)
             full = self.column_hits(E, x0, x1)
@@ -1199,17 +1199,23 @@ class Mode:
                         if lvl == 0:
                             continue
                     c = col_[py]
+                    # The shield remains luminous in free air, translucent over
+                    # architecture: belts, columns and hacked floors stay visible.
+                    span = self.tcols.get(x) if not back else None
+                    over_tower = span is not None and span[0] <= py < span[1]
+                    transmission = 0.32 if over_tower else 1.0
+                    key = (c, over_tower)
                     m = memos[lvl]
-                    o = m.get(c)
+                    o = m.get(key)
                     if o is None:
                         if lvl == 4:
-                            a = 0.45 * sc
+                            a = 0.45 * sc * transmission
                             o = (int(c[0] + (hot[0] - c[0]) * a), int(c[1] + (hot[1] - c[1]) * a),
                                  int(c[2] + (hot[2] - c[2]) * a))
                         else:
-                            a = lv[lvl]
+                            a = lv[lvl] * transmission
                             o = (int(c[0] + (r - c[0]) * a) & 0xF8, int(c[1] + (g - c[1]) * a) & 0xF8, int(c[2] + (b - c[2]) * a) & 0xF8)
-                        m[c] = o
+                        m[key] = o
                     col_[py] = o
             if not back and cur:
                 self.draw_cracks(fb, now, atk, Rs, rot, yc)

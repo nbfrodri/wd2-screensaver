@@ -445,8 +445,8 @@ class Mode:
         scale = 2 if w >= 100 else 1
         word = build_word("DEDSEC", scale)
         # vertical layout: skull + word sit in the sky, the horizon at ~60%
-        sr = min(int(h * 0.36), int(h * 0.6) - 11)
-        show_skull = sr >= 8 and w >= 60
+        sr = min(int(h * 0.36), max(6, int(h * 0.6) - 11))
+        show_skull = sr >= 6 and w >= 60 and h >= 24
         sr = sr if show_skull else 0
         content = (sr + 1 if show_skull else 0) + 5 + 2
         hz = self.hz = max(int(h * 0.6), content + 4)
@@ -562,13 +562,15 @@ class Mode:
         for d in range(1, dmax + 1):
             u = d / dmax
             f = u ** 0.7
-            self.vcol.append(blend((70, 14, 80), (255, 40, 200), f))
-            self.hcol.append(blend((64, 14, 74), (240, 70, 210), f ** 0.8))
-            self.glow.append(blend((40, 6, 46), (92, 14, 88), f))
-            self.vfar.append(blend((50, 10, 60), (150, 26, 130), f))
+            # Keep the moving perspective legible without giving the floor
+            # the same luminous weight as the face of the logo.
+            self.vcol.append(blend((44, 10, 55), (158, 28, 132), f))
+            self.hcol.append(blend((34, 9, 44), (104, 27, 103), f ** 0.8))
+            self.glow.append(blend((26, 5, 34), (53, 10, 57), f))
+            self.vfar.append(blend((30, 7, 40), (76, 17, 76), f))
         # floor row d -> colour of the floor background there (for reflections)
         self.fbg = [None] + [self.floor_bg[min(len(self.floor_bg) - 1, (hp + d) // 2 - hz - 1)][0] for d in range(1, dmax + 1)]
-        self.horizon = [blend((255, 140, 220), WHITE, 0.25), (255, 60, 170)]
+        self.horizon = [(158, 62, 126), (122, 27, 99)]
 
     def build_skyline(self):
         w, hp = self.w, self.hp
