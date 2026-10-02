@@ -1,6 +1,112 @@
 # Handoff — WD2 screensavers
 
-## LATEST: continuation completed (2026-10-02)
+## LATEST: further visual polish completed (2026-10-02 night)
+
+User asked to continue Claude's changes, substantially improve DRONE and
+DOTMATRIX, add visual polish to TOWER and remove NUDLE's occasional startup
+pause. Preserve all eight existing modified files, including Claude's cursor
+cleanup and idle-lock changes. Source backup before this pass:
+`/tmp/wd2-evening-backup-20261002-220306`.
+
+Three gpt-6.1-sol low agents finished disjoint DRONE, DOTMATRIX and TOWER files.
+Root owns NUDLE, integration review and documentation. No desktop configuration
+or installed plugin changes are being made in this pass.
+
+NUDLE diagnosis confirmed: first constructor spent1.291s building deterministic
+map artwork. Added a549KiB baked assets/nudle_map.npz, fingerprinted against
+geometry/builder source, loaded with allow_pickle=False and shape/dtype checks.
+Initial constructor sample is0.094s; bitmap/masks/mips match generation exactly.
+Missing/stale resource falls back to procedural generation. Regenerate via
+`/usr/bin/python3 tools/build_nudle_map.py` after changing map construction.
+This asset contains no live/user data. Stale/missing/corrupt fallback checks pass.
+
+Visual work now finished: DRONE stable window modules per facade (LOD no longer
+splits a pane differently across pixels), restrained lighting, deeper background
+city, rain/reflections only outside tunnel, city visible through exit, tunnel
+curbs/rails and police UAV. DOTMATRIX bright modeled hands and bolder DEDSEC,
+quiet background and fixed premature return snap. TOWER mechanical belts,
+setback parapets and final pullback showing crown/antenna and sky skull.
+Claude BOTNET pixel arcs/occlusion rewrite visually reviewed and retained.
+
+All14 full timeline/glyph/farewell checks passed at90x26/175x45/240x60; final
+DRONE/DOTMATRIX versions additionally passed full per-mode checks. All14 names
+discovered without skips. Final serial timing completed with all agents idle: all14 at175x45 plus the
+four requested modes at90x26/240x60 (22 samples). Permanent evidence:
+`docs/performance-2026-10-02-night.csv`, report:
+`docs/polish-2026-10-02-night.md`. At175x45 DOTMATRIX16.8ms, DRONE32.5ms,
+NUDLE11.8ms and TOWER34.6ms. DRONE54.8ms/TOWER49.1ms at240x60 exceed24fps budget.
+No guaranteed25ms/24fps claim; samples vary by scene and are not worst cases.
+AGENTS/CLAUDE and architecture/validation/README updated, including44sDOTMATRIX
+loop and NUDLE rebuild instructions. No outstanding source work or active agents.
+User's session authorization for commit/push persists; use configured user identity
+with no coauthor/assistant trailers. Resulting commit is available in Git log. No headless
+check should be described as a new live desktop test.
+
+## Previous: Claude visual pass in progress (2026-10-02 evening)
+
+User asked for big *visual* improvements to TOWER, NUDLE and DOTMATRIX, plus the
+weak points from Claude's evaluation (scores /10 from fresh 175x45 previews):
+DRONE 6 (near buildings are unreadable orange blobs, 41 ms), DOTMATRIX 6 (static,
+empty), TOWER 7 (flat block tower, sparse city), NUDLE 7 (fold confusing, empty
+search bar, 34 ms), BOTNET 7 (arcs render as black smears on the globe).
+
+Uncommitted, finished and tested by Claude (keep): `dedsec.py` restores the mouse
+cursor first in `cleanup()` and wraps the frame loop so a dead pty (idle lock runs
+`pkill -f org.omarchy.screensaver`) can't skip it; `integration/.../phobos.idle/Service.qml`
+and the installed copy restore the cursor after `omarchy-system-wake`. Live test:
+launch saver → cursor invisible true → pkill like the lock → invisible false.
+
+Idle lock disabled at the user's request: `~/.config/omarchy/shell.json` now has
+`"idle": {"screensaver": 150, "lock": false}` (backup `shell.json.bak.*`). The cloned
+`phobos.idle/Service.qml` (installed + `integration/` copy) gained `lockEnabled`
+(`idleConfig.lock !== false`); when false no lock timer is scheduled and the first idle
+timeout is the screensaver's. `omarchy-shell idle status` reports `lockEnabled`.
+Needed `omarchy restart shell` (hot reload kept the old instance answering IPC).
+Verified: lockEnabled False, screensaver 150 s. Manual `omarchy system lock` still works.
+
+Parallel Opus sub-agents (disjoint files, nothing else may be edited by them):
+| agent | files | progress notes |
+|---|---|---|
+| TOWER | `mode_tower.py` (keep `from mode_logo import SKULL` working) | `/tmp/wd2-agent-notes/tower.md` |
+| NUDLE — **DONE** (rebuilt: real SF outlines, 3 road tiers, 3D bridges + ~95 towers, 6 views, typed search, pins, routes with arrow, ETA/turn cards, tile-flip fold, pink DedSec hijack; verify --full passed; ~11-16 ms avg under load, camera flights up to ~33 ms, flip start frame 50-100 ms, first map build ~1.3 s per process; reviewed by Claude) | `mode_nudle.py` | `/tmp/wd2-agent-notes/nudle.md` |
+| DOTMATRIX — **DONE** (44 s loop: 3D hands, touch ripple, pour into DEDSEC, orbit rings, dotted globe, re-form; verify --full passed; 17.6 ms at 175x45, 27 ms at 240x60; reviewed by Claude) | `mode_dotmatrix.py` (read-only `assets/dot_hands.json`) | `/tmp/wd2-agent-notes/dotmatrix.md` |
+| DRONE+BOTNET | `mode_drone.py`, `mode_botnet.py` | `/tmp/wd2-agent-notes/drone-botnet.md` |
+
+### Status snapshot when the user ran low on Claude tokens (2026-10-02 ~21:00)
+
+Working tree (all uncommitted): `dedsec.py`, `handoff.md`, `integration/.../phobos.idle/Service.qml`
+(Claude, finished), `mode_dotmatrix.py` + `mode_nudle.py` (agents DONE, reviewed),
+`mode_tower.py`, `mode_botnet.py`, `mode_drone.py` (agents may still be running or be cut off).
+
+- TOWER agent: full rewrite done and `verify --full` OK at milestone 2 (raycast chamfered
+  setback tower, 7-layer city, hex prism shields with cracks/shards, drones, heli searchlight,
+  clouds, finale blackout → sky skull → shockwave). Perf is the open issue: ~27 ms mean,
+  31-35 ms peak (old was ~20). Original backup `/tmp/wd2-agent-notes/mode_tower.orig.py`.
+  Must still review previews (`tools/preview.py --mode mode_tower --times 3 15 30 45 60`).
+- BOTNET: DONE by agent (black smears fixed: text was drawn over globe pixels with bg=None;
+  now ortho globe, pixel arcs with glow + occlusion, pixel packets, nodes with rings, night
+  city lights, custom panels NODE LIST / WORLD MAP / TRAFFIC / REGIONS). verify --full OK,
+  18 ms. Not yet reviewed visually by Claude.
+- DRONE: WORK IN PROGRESS. Done: wider streets, higher cruise altitude looking down,
+  numpy facade windows with LOD, side shading, street lamps + cars with trails; ~32 ms
+  (was 43). TODO: tunnel as lit arches, siren perf, more perf, `verify --full`.
+  Original backup: scratchpad `dronebot/mode_drone.orig.py` (may be gone) — git HEAD also has it.
+
+Next steps for whoever continues (Codex):
+1. If the agent processes are gone, run `/usr/bin/python3 tools/verify.py --full --mode mode_drone`
+   (and tower, botnet). If DRONE fails and can't be fixed quickly, `git checkout -- mode_drone.py`.
+2. Review previews of TOWER, BOTNET, DRONE; then serial timings for all 14 modes
+   (`tools/snap.py` at 175x45 with nothing else running) and update docs/performance CSV.
+3. Optional remaining: HACKERSPACE/HOLOGRAM perf (~32 ms), TOWER perf.
+4. Report to the user in Spanish; commit/push only if asked (no assistant trailers).
+
+If interrupted: read the notes files, `git diff --stat`, run
+`/usr/bin/python3 tools/verify.py --full --mode <m>` per touched mode; if a mode is
+broken and not quickly fixable, `git checkout -- <file>`. Remaining after agents:
+HACKERSPACE/HOLOGRAM perf (~32 ms), serial timings, previews, Spanish report,
+commit only if the user asks.
+
+## Previous: continuation completed (2026-10-02)
 
 Claude's interrupted visual work has been preserved and completed. All delegated
 agents have finished; no source tasks remain running. The user authorized commit

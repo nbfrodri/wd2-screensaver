@@ -15,7 +15,8 @@ path is a symlink, so source edits affect the next screensaver launch.
 
 Read [architecture](docs/architecture.md), [installation](docs/installation.md)
 and [validation](docs/validation.md). Current review and measurements are in
-[the October 2 polish report](docs/polish-2026-10-02.md).
+[the latest night review](docs/polish-2026-10-02-night.md). The
+[earlier October 2 report](docs/polish-2026-10-02.md) is historical.
 
 For parallel tasks, assign disjoint files and gather test evidence. Keep shared
 modules and integration ownership explicit. Run full mode/size/close checks and

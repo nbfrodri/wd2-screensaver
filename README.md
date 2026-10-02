@@ -20,7 +20,7 @@ La entrada de teclado o el movimiento del ratón cierran el salvapantallas despu
 
 Los 14 modos son `dedsec`, `wrench`, `profiler`, `botnet`, `drone`, `hologram`, `goldengate`, `hackerspace`, `nudle`, `scoutx`, `textwall`, `tower`, `traffic` y `dotmatrix`. Se descubren automáticamente en `mode_*.py`.
 
-Las escenas combinan geometría, texturas, luces, carteles, tráfico y datos locales. DOTMATRIX convierte las manos del recurso de puntos en DEDSEC y vuelve a las manos en un ciclo de 32 segundos. La dirección visual evita bloques de código de hacking falso legible: los caracteres funcionan como textura. Los textos externos se limitan a caracteres imprimibles de ancho simple para conservar la cuadrícula.
+Las escenas combinan geometría, texturas, luces, carteles, tráfico y datos locales. DOTMATRIX anima las manos del recurso de puntos, forma DEDSEC, se transforma en un globo de puntos y vuelve a las manos en un ciclo de 44 segundos. La dirección visual evita bloques de código de hacking falso legible: los caracteres funcionan como textura. Los textos externos se limitan a caracteres imprimibles de ancho simple para conservar la cuadrícula.
 
 ## Configuración y privacidad
 
@@ -70,3 +70,5 @@ En esta máquina, el repositorio está en `/home/phobos/Projects/wd2-screensaver
 ## Procedencia
 
 `assets/dot_hands.json` deriva de un fondo de pantalla local. Las marcas DedSec y la referencia a Watch Dogs pertenecen a terceros. El complemento de inactividad procede de una copia del complemento de Omarchy adaptada para esta instalación. Esta copia privada no presupone una licencia para el arte o el código del usuario ni concede derechos sobre materiales de terceros.
+
+La [revisión visual nocturna](docs/polish-2026-10-02-night.md) documenta la continuación sobre los cambios de Claude y la eliminación de la pausa inicial de NUDLE.

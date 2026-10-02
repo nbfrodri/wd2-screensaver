@@ -38,6 +38,9 @@
   `step(screen,now)` and `farewell(screen,now,progress)`.
 - Preserve imports used by other modes. For example, TOWER consumes `SKULL`
   from `mode_logo.py` even though DEDSEC has its own newer skull renderer.
+- After editing NUDLE map geometry/texture construction, regenerate its
+  deterministic artwork with `tools/build_nudle_map.py` and include the NPZ.
+  A stale/missing resource falls back correctly but restores the startup pause.
 - Use `/usr/bin/python3` for tools: this machine's mise Python lacks NumPy.
   The interactive entry point handles that interpreter mismatch itself.
 - No unnecessary desktop restart: a newly launched saver loads source changes.

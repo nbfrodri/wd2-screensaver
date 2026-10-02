@@ -1,7 +1,8 @@
 # Validación
 
-Consulta también la [revisión del 2 de octubre](polish-2026-10-02.md) para los
-resultados actuales, la comprobación de descubrimiento/rotación y las
+Consulta la [revisión nocturna](polish-2026-10-02-night.md) y la
+[revisión anterior del 2 de octubre](polish-2026-10-02.md) para los
+resultados registrados, la comprobación de descubrimiento/rotación y las
 optimizaciones posteriores. Las cifras siguientes conservan su contexto histórico.
 
 Este documento registra la validación anterior comunicada para esta versión. Durante la preparación de esta copia y su documentación no se hizo una nueva comprobación visual en vivo: ya había un salvapantallas en ejecución y se evitó interferir con él.
@@ -20,7 +21,7 @@ La última pasada registrada cubrió los 14 modos en tres tamaños de terminal: 
 
 La pasada breve dibuja 24 fotogramas por modo en 90 × 26, 175 × 45 y 240 × 60. Después prueba nueve progresiones de despedida. `--full` sustituye esos fotogramas por 101 pasos separados por 0,8 segundos, cubriendo una línea temporal simulada de 80 segundos. `--mode` limita la comprobación al módulo indicado y puede combinarse con `--full`.
 
-La herramienta verifica que las celdas finales y las despedidas contienen un único carácter imprimible de ancho simple, además de ejecutar el dibujo y renderizado. No inicia fuentes en vivo ni acciones del escritorio. Estas comprobaciones detectan errores de ejecución y de cuadrícula; la apariencia, los cambios continuos entre muestras y la integración requieren revisión visual y una prueba interactiva.
+La herramienta verifica que las celdas de cada fotograma y las despedidas contienen un único carácter imprimible de ancho simple, además de ejecutar el dibujo y renderizado. No inicia fuentes en vivo ni acciones del escritorio. Estas comprobaciones detectan errores de ejecución y de cuadrícula; la apariencia, los cambios continuos entre muestras y la integración requieren revisión visual y una prueba interactiva.
 
 ## Repetir una captura sin interfaz
 

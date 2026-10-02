@@ -190,11 +190,16 @@ def main():
     managed = screensaver_in_focus()
 
     def cleanup(*_):
-        sys.stdout.write("\033[?1003l\033[?1000l\033[0m\033[2J\033[?25h")
-        sys.stdout.flush()
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        # Restore the mouse cursor first: when the idle lock kills the terminal,
+        # the writes below fail on the dead pty and would skip this step.
         if managed:
             set_cursor_invisible(False)
+        try:
+            sys.stdout.write("\033[?1003l\033[?1000l\033[0m\033[2J\033[?25h")
+            sys.stdout.flush()
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            pass
         DATA.stop()
         if managed:
             subprocess.run(["pkill", "-f", "[o]rg.omarchy.screensaver"])
@@ -216,30 +221,37 @@ def main():
     start = time.time()
     armed_mouse = False
     last_focus_check = start
-    while True:
-        frame_start = time.time()
-        sys.stdout.write(saver.frame(frame_start))
-        sys.stdout.flush()
+    try:
+        while True:
+            frame_start = time.time()
+            sys.stdout.write(saver.frame(frame_start))
+            sys.stdout.flush()
 
-        # Enable mouse motion reporting after a short grace period so the
-        # launch itself doesn't immediately dismiss the screensaver.
-        if not armed_mouse and frame_start - start > 1.5:
-            termios.tcflush(fd, termios.TCIFLUSH)
-            sys.stdout.write("\033[?1000h\033[?1003h")
-            armed_mouse = True
+            # Enable mouse motion reporting after a short grace period so the
+            # launch itself doesn't immediately dismiss the screensaver.
+            if not armed_mouse and frame_start - start > 1.5:
+                termios.tcflush(fd, termios.TCIFLUSH)
+                sys.stdout.write("\033[?1000h\033[?1003h")
+                armed_mouse = True
 
-        if managed and frame_start - last_focus_check > 1:
-            last_focus_check = frame_start
-            if not screensaver_in_focus():
+            if managed and frame_start - last_focus_check > 1:
+                last_focus_check = frame_start
+                if not screensaver_in_focus():
+                    farewell(saver, fd)
+                    cleanup()
+
+            timeout = max(0, 1 / fps - (time.time() - frame_start))
+            r, _, _ = select.select([fd], [], [], timeout)
+            if r and frame_start - start > 0.5:
                 farewell(saver, fd)
                 cleanup()
 
-        timeout = max(0, 1 / fps - (time.time() - frame_start))
-        r, _, _ = select.select([fd], [], [], timeout)
-        if r and frame_start - start > 0.5:
-            farewell(saver, fd)
-            cleanup()
-
+    except SystemExit:
+        raise
+    except BaseException:
+        # Terminal gone (e.g. killed by the idle lock) or any crash: never
+        # leave the desktop with an invisible mouse cursor.
+        cleanup()
 
 if __name__ == "__main__":
     main()

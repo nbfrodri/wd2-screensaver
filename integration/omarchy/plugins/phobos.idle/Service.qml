@@ -20,7 +20,9 @@ Item {
     ? shell.shellConfig.idle : (shell && shell.idleConfig ? shell.idleConfig : ({}))
   readonly property int screensaverTimeoutSeconds: secondsFromConfig(idleConfig.screensaver, defaultScreensaverSeconds)
   readonly property int lockTimeoutSeconds: secondsFromConfig(idleConfig.lock, defaultLockSeconds)
-  readonly property int firstIdleTimeoutSeconds: Math.min(screensaverTimeoutSeconds, lockTimeoutSeconds)
+  // "lock": false in shell.json disables the idle lock (screensaver still runs).
+  readonly property bool lockEnabled: idleConfig.lock !== false
+  readonly property int firstIdleTimeoutSeconds: lockEnabled ? Math.min(screensaverTimeoutSeconds, lockTimeoutSeconds) : screensaverTimeoutSeconds
   readonly property int screensaverDelaySeconds: Math.max(0, screensaverTimeoutSeconds - firstIdleTimeoutSeconds)
   readonly property int lockDelaySeconds: Math.max(0, lockTimeoutSeconds - firstIdleTimeoutSeconds)
   readonly property bool idleEnabled: stayAwakeStateLoaded && !stayAwake
@@ -94,6 +96,7 @@ Item {
     if (root.screensaverDelaySeconds === 0) launchScreensaver()
     else screensaverTimer.restart()
 
+    if (!root.lockEnabled) return
     if (root.lockDelaySeconds === 0) lockSystem("lock-timeout-immediate")
     else lockTimer.restart()
   }
@@ -104,7 +107,7 @@ Item {
     lockTimer.stop()
     screensaverLaunchGraceTimer.stop()
 
-    if (root.idledThisCycle) runProcess(wakeProcess, "wake", "omarchy-system-wake")
+    if (root.idledThisCycle) runProcess(wakeProcess, "wake", "omarchy-system-wake; hyprctl eval 'hl.config({ cursor = { invisible = false } })' >/dev/null 2>&1 || hyprctl keyword cursor:invisible false >/dev/null 2>&1")
 
     root.idledThisCycle = false
     root.screensaverStartedThisCycle = false
@@ -189,6 +192,7 @@ Item {
       screensaverStarted: root.screensaverStartedThisCycle,
       screensaver: root.screensaverTimeoutSeconds,
       lock: root.lockTimeoutSeconds,
+      lockEnabled: root.lockEnabled,
       screensaverDelay: root.screensaverDelaySeconds,
       lockDelay: root.lockDelaySeconds,
       screensaverWindows: root.screensaverWindowCount,
