@@ -425,8 +425,18 @@ class Mode:
             wpx = max(1, int(wd * cam.f2 / q0[2]))
             hp = max(1, int(q0[1] - q1[1]))
             fog = min(0.85, q0[2] / 170)
-            prect(s, q0[0] - wpx // 2, q1[1], wpx, hp, cblend((24, 18, 46), BLACK, fog))
-            prect(s, q0[0] - wpx // 2, q1[1], wpx, 1, cblend(col, BLACK, fog + 0.1))
+            left = q0[0] - wpx // 2
+            prect(s, left, q1[1], wpx, hp, cblend((24, 26, 42), BLACK, fog))
+            # A darker side wall and roof cap give the distant blocks volume.
+            side = max(1, wpx // 3)
+            prect(s, left + wpx - side, q1[1], side, hp, cblend((13, 17, 29), BLACK, fog))
+            prect(s, left, q1[1], wpx, 1, cblend(col, BLACK, min(.95, fog + 0.1)))
+            if wpx >= 5 and hp >= 6:
+                wc = cblend((90, 101, 115), BLACK, min(.95, fog + .2))
+                for wy in range(max(0, int(q1[1]) + 3), min(s.ph, int(q0[1])), 4):
+                    for wx in range(max(0, int(left) + 1), min(s.w, int(left + wpx - side)), 3):
+                        if (wx + wy) % 5 < 2:
+                            s.pixel(wx, wy, wc)
 
     # ------------------------------------------------------------ tower
     def tower(self, s, now, climb):
@@ -460,6 +470,11 @@ class Mode:
                 if not P:
                     continue
                 fill(s, P, col)
+                # A broad cool reflection is contained within the glass facade.
+                reflection = cam.poly([(ax + (bx-ax)*u, yy, az + (bz-az)*u)
+                                       for u, yy in ((.57, y0), (.78, y0), (.78, y1), (.57, y1))])
+                if reflection:
+                    fill(s, reflection, blend(col, (73, 106, 136), .22))
                 # Steel spandrels and cross-braced mechanical floors follow the facade.
                 rib = blend(col, BLACK, .28)
                 for floor in range(fa, fb, 2):
@@ -513,6 +528,16 @@ class Mode:
                         if 0 <= wx and wx + ww <= W and 0 <= wy and wy + wh <= PH:
                             for yy in range(wy, wy + wh):
                                 (PB if yy & 1 else PT)[yy >> 1][wx:wx + ww] = [wc] * ww
+                # Corporate panel on the lowest occupied tier; keep the label
+                # inside its projected face and away from narrow edge facets.
+                if fa == 0 and fb >= 3:
+                    qa = cam.proj((ax, 2 * FH, az))
+                    qb = cam.proj((bx, 2 * FH, bz))
+                    qm = cam.proj(((ax + bx) / 2, 2 * FH, (az + bz) / 2))
+                    if qa and qb and qm and abs(qb[0] - qa[0]) >= 9 and abs(qb[1] - qa[1]) < 4:
+                        xx, yy = int(qm[0]) - 3, int(qm[1]) // 2
+                        if 2 <= yy < s.h - 3 and 0 <= xx <= s.w - 7:
+                            s.text(xx, yy, " BLUME ", CYAN if self.broken < 3 else PINK)
                 # glowing corner edge
                 ec = blend(CYAN, BLACK, 0.55) if fa >= self.broken else blend(PINK, BLACK, 0.35)
                 line3(s, cam, (ax, y0, az), (ax, y1, az), ec)

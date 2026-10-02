@@ -51,13 +51,16 @@ def variants(c):
         neon = blend((25, 0, 45), PINK, L / 0.5)
     else:
         neon = blend(PINK, CYAN, min(1, (L - 0.5) / 0.35)) if L < 0.85 else blend(CYAN, WHITE, (L - 0.85) / 0.15)
+    # Retain source hues and continuous shading so landmarks survive the tint.
+    neon = blend(c, neon, 0.38)
     g = int(L * 255)
     v = blend((g, g, g), c, 0.55)
     vhs = (v[0] * 0.85 + 30, v[1] * 0.8 + 18, v[2] * 0.9 + 40)
     vhs = tuple(min(255, int(x)) for x in vhs)
     vhsd = tuple(int(x * 0.62) for x in vhs)
     inv = (255 - c[0], 255 - c[1], 255 - c[2])
-    ded = PINK if L > 0.62 else ((90, 0, 60) if L > 0.32 else (16, 0, 22))
+    ded = blend((12, 5, 22), (232, 110, 188), L)
+    ded = blend(ded, c, 0.38)
     return [c, neon, vhs, vhsd, inv, ded]
 
 
@@ -559,7 +562,8 @@ class Mode:
                 like = "<3 " + fmt(cd.likes)
                 hotc = PINK if (cd.pop and now - cd.pop < 0.5) else blend(PINK, WHITE, 0.2)
                 self.ctext(s, x, y, like[:maxw], hotc, capc)
-                if maxw > len(like) + len(cd.user) + 2:
+                if maxw > len(like) + len(cd.user) + 4:
+                    self.ctext(s, x + maxw - len(cd.user) - 2, y, "◉", PINK, capc)
                     self.ctext(s, x + maxw - len(cd.user), y, cd.user, CYAN, capc)
                 if y + 1 < self.bottom and k > 0.93:
                     cm = cd.comment[:maxw]
@@ -646,6 +650,12 @@ class Mode:
                     s.text(x, 2, t, WHITE)
                 x += len(t) + 3
             s.text(x, 2, "▁" * max(0, (s.w - x - 2)), DIM_PINK)
+            if s.w > 145:
+                stories = "STORIES  ◉ M  ◉ W  ◉ S"
+                sx = s.w - len(stories) - 3
+                s.text(sx, 2, stories, DIM_PINK)
+                for off in (9, 14, 19):
+                    s.put(sx + off, 2, "◉", CYAN if off == 14 else PINK)
         else:
             s.text(0, 2, "▁" * s.w, DIM_PINK)
 

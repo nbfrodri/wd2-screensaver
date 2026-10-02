@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import time
 import unicodedata
+import random
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -24,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--mode", help="Module name, for example mode_dotmatrix")
+    parser.add_argument("--seed", type=int, default=24, help="repeatable procedural scene seed")
     args = parser.parse_args()
     paths = sorted(ROOT.glob("mode_*.py"))
     if args.mode:
@@ -34,6 +36,7 @@ def main():
     for path in paths:
         module = importlib.import_module(path.stem)
         for width, height in ((90, 26), (175, 45), (240, 60)):
+            random.seed(args.seed)
             base = real_time()
             now = base
             time.time = lambda: now
@@ -46,7 +49,7 @@ def main():
                     screen.clear()
                     mode.step(screen, now)
                     screen.render()
-                check_cells(screen)
+                    check_cells(screen)
                 mode._exit_snapshot = screen.snapshot()
                 for progress in (0, .1, .2, .35, .5, .65, .8, .95, 1):
                     screen.clear()

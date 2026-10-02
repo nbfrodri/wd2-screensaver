@@ -3,15 +3,16 @@
 import math
 import random
 import time
+from functools import lru_cache
 
 from lib import (BLACK, CYAN, DIM_PINK, GREEN, GREY, NEON, ORANGE, PINK, PURPLE, WHITE, YELLOW,
                  Glitch, Rain, Typer, blend, ease_out, line_points, overlaps, pulse)
 from sysdata import DATA
-from engine3d import Floor
 from widgets import Panels, Particles, PostFX, Sticker, Ticker
 
 NAME = "DEDSEC"
 
+# Compatibility bitmap used by TOWER's finale; the logo uses make_skull().
 SKULL = [
     "......XXXXXXXXXX......",
     "....XXXXXXXXXXXXXX....",
@@ -29,6 +30,7 @@ SKULL = [
     ".....XXXXXXXXXXXXX....",
     "......XXXXXXXXXXX.....",
 ]
+
 
 FONT = {
     "D": ["█████ ", "██  ██", "██  ██", "██  ██", "█████ "],
@@ -220,6 +222,37 @@ class Graffiti:
                               random.uniform(-3, 3), random.uniform(0.15, 0.4), "·•", blend(col, WHITE, 0.3))
 
 
+
+
+@lru_cache(maxsize=32768)
+def _tint(c, col, t):
+    return blend(c, col, t)
+
+
+def tint_row(s, y, color, t):
+    """Cached-colour version of Screen.tint_row (the scan band runs every frame)."""
+    if 0 <= y < s.h:
+        for layer in (s.fg, s.pt, s.pb, s.bg):
+            layer[y] = [None if c is None else _tint(c, color, t) for c in layer[y]]
+
+
+def post_fx(s, now, glitch):
+    """CRT scan band and row tearing, as widgets.PostFX but with cached blends."""
+    span = s.h + 16
+    by = int((now * 7.0) % span) - 8
+    for k, t in ((0, 0.45), (-1, 0.25), (1, 0.25), (-2, 0.1)):
+        tint_row(s, by + k, WHITE, t)
+    if glitch:
+        for _ in range(random.randint(2, 5)):
+            y0 = random.randrange(s.h)
+            dx = random.randint(-14, 14)
+            for y in range(y0, min(s.h, y0 + random.randint(1, 4))):
+                s.shift_row(y, dx)
+                tint_row(s, y, random.choice((PINK, CYAN)), 0.5)
+        if random.random() < 0.3:
+            s.noise_lines(2)
+
+
 def build_word(word, scale):
     rows = [""] * 5
     for letter in word:
@@ -228,38 +261,213 @@ def build_word(word, scale):
     return rows
 
 
+# ------------------------------------------------------------------ the DedSec skull (pixel art)
+# Palette indices: 0..7 bone shades (dark -> lit), 8 socket/void, 9 outline, 10 eye glow.
+BONE = [blend((92, 62, 128), (252, 248, 255), i / 7) for i in range(8)]
+SOCKET, OUTLINE, EYE = 8, 9, 10
+SKULL_BASE = BONE + [(16, 3, 26), (6, 0, 12), PINK]
+
+
+def make_skull(sw, sh):
+    """Rasterise a crisp, front-facing stylised skull at any pixel size.
+
+    Returns (u, v, index) with u in columns and v in half-block pixel rows.
+    Built from simple shapes so it stays recognisable when small: domed
+    cranium, cheekbones, angled eye sockets with glowing pupils, inverted-heart
+    nasal cavity, two rows of teeth, and a DedSec crack across the crown.
+    """
+    def nxy(u, v):
+        return (u + 0.5) / sw * 2 - 1, (v + 0.5) / sh * 2 - 1
+
+    def solid(nx, ny):
+        a = abs(nx)
+        if ny <= 0.16 and (nx / 0.92) ** 2 + ((ny + 0.28) / 0.70) ** 2 <= 1:
+            return True
+        if -0.12 <= ny <= 0.42 and a <= 0.80 - 0.42 * max(0.0, ny - 0.05):
+            return not (a > 0.70 and -0.02 < ny < 0.10)           # temple notch
+        return (a / 0.52) ** 4 + ((ny - 0.62) / 0.36) ** 4 <= 1      # jaw
+
+    def void(nx, ny):
+        a = abs(nx)
+        brow = -0.17 + 0.32 * (0.40 - a)
+        if ((a - 0.37) / 0.25) ** 2 + ((ny - 0.05) / 0.21) ** 2 <= 1 and ny >= brow:
+            return True                                              # eye socket
+        if 0.17 <= ny <= 0.41 and a <= 0.02 + 0.13 * (ny - 0.17) / 0.24 and not (a < 0.025 and ny > 0.33):
+            return True                                              # nose
+        if a < 0.42 and 0.49 <= ny <= 0.82:
+            mouth = 0.635 + 0.07 * nx * nx
+            if abs(ny - mouth) < 0.035:
+                return True
+            if ((nx + 0.065) / 0.13) % 1.0 < 0.2 and abs(ny - mouth) < 0.14:
+                return True                                          # tooth gaps
+        return False
+
+    grid = {}
+    for v in range(sh):
+        for u in range(sw):
+            nx, ny = nxy(u, v)
+            if solid(nx, ny):
+                grid[(u, v)] = "v" if void(nx, ny) else "b"
+    # crack running down the crown (pixel polyline)
+    crack = [(0.20, -0.99), (0.10, -0.82), (0.24, -0.68), (0.13, -0.53), (0.21, -0.43)]
+    for (ax, ay), (bx, by) in zip(crack, crack[1:]):
+        for p in line_points(int((ax + 1) / 2 * sw), int((ay + 1) / 2 * sh), int((bx + 1) / 2 * sw), int((by + 1) / 2 * sh)):
+            if p in grid:
+                grid[p] = "v"
+    out = []
+    for v in range(sh):
+        for u in range(sw):
+            k = grid.get((u, v))
+            nx, ny = nxy(u, v)
+            if k is None:
+                if any((u + du, v + dv) in grid for du, dv in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                    out.append((u, v, OUTLINE))
+                continue
+            if k == "v":
+                a = abs(nx)
+                glow = ((a - 0.36) / 0.10) ** 2 + ((ny - 0.08) / 0.085) ** 2 <= 1
+                out.append((u, v, EYE if glow and ny < 0.2 else SOCKET))
+                continue
+            lum = 0.80 - 0.22 * ny - 0.35 * max(0.0, abs(nx) - 0.55)
+            up, down = grid.get((u, v - 1)), grid.get((u, v + 1))
+            if up is None:
+                lum += 0.22
+            elif up == "v":
+                lum += 0.12                                           # lit lower rim of a hole
+            if down is None or down == "v":
+                lum -= 0.28                                           # shadow under ledges
+            if (u + 1, v) not in grid:
+                lum -= 0.18
+            if (u - 1, v) not in grid:
+                lum += 0.08
+            if 0.18 < ny < 0.42 and 0.42 < abs(nx) < 0.72:
+                lum -= 0.16                                           # hollow under cheekbones
+            out.append((u, v, max(0, min(7, int(lum * 7.99)))))
+    return out
+
+
+# ------------------------------------------------------------------ San Francisco skyline
+def make_skyline(w, sky_px, seed=7):
+    """Height map (pixels above horizon) plus thin structures and window lights."""
+    rnd = random.Random(seed)
+    hgt = [0] * w
+    S = sky_px
+    x = 0
+    while x < w:                                    # low continuous city blocks
+        bw = rnd.randint(2, 5)
+        hh = rnd.randint(1, max(2, int(S * 0.07)))
+        for i in range(x, min(w, x + bw)):
+            hgt[i] = hh
+        x += bw
+
+    def bump(c, half, top):                         # rolling hills
+        for i in range(max(0, int(c - half)), min(w, int(c + half) + 1)):
+            t = (i - c) / half
+            hgt[i] = max(hgt[i], int(top * max(0.0, 1 - t * t) ** 1.5))
+
+    bump(w * 0.10, w * 0.10, S * 0.13)
+    bump(w * 0.72, w * 0.06, S * 0.07)
+    extra = []
+    # downtown cluster
+    for _ in range(int(w * 0.11)):
+        c = rnd.gauss(0.45, 0.12) * w
+        bw = rnd.randint(2, 5)
+        top = int(S * rnd.uniform(0.08, 0.22) * max(0.35, 1 - abs(c / w - 0.45) * 2.2))
+        for i in range(max(0, int(c)), min(w, int(c) + bw)):
+            hgt[i] = max(hgt[i], top)
+    # Transamerica pyramid
+    tx, th = int(w * 0.30), int(S * 0.36)
+    for i in range(-3, 4):
+        if 0 <= tx + i < w:
+            hgt[tx + i] = max(hgt[tx + i], int(th * (1 - abs(i) / 3.6)))
+    extra += [(tx, -th - k) for k in range(1, max(2, int(S * 0.05)))]
+    # Salesforce tower with its rounded crown
+    sx, sh_ = int(w * 0.62), int(S * 0.40)
+    for i, cut in zip(range(-3, 4), (3, 1, 0, 0, 0, 1, 3)):
+        if 0 <= sx + i < w:
+            hgt[sx + i] = max(hgt[sx + i], sh_ - cut)
+    # Sutro tower on the hill
+    ux = int(w * 0.10)
+    base = hgt[ux] if 0 <= ux < w else 0
+    mast = int(S * 0.20)
+    for k in range(mast):
+        spread = 2 if k > mast * 0.75 else (1 if k < mast * 0.3 else 0)
+        for dx in {-spread, spread}:
+            extra.append((ux + dx, -base - k))
+    for dx in range(-2, 3):
+        extra.append((ux + dx, -base - mast))
+        extra.append((ux + dx, -base - int(mast * 0.75)))
+    for dx in (-2, 0, 2):
+        extra += [(ux + dx, -base - mast - 1), (ux + dx, -base - mast - 2)]
+    # Golden Gate towers + cables on the far right
+    gx0, gx1, deck = int(w * 0.83), int(w * 0.97), int(S * 0.06)
+    tower = int(S * 0.26)
+    for gx in (gx0, gx1):
+        for k in range(tower):
+            extra += [(gx - 1, -k), (gx + 1, -k)]
+            if k % max(3, tower // 4) == 0 or k == tower - 1:
+                extra.append((gx, -k))
+    for i in range(int(w * 0.78), w):
+        extra.append((i, -deck))
+    span = max(1, gx1 - gx0)
+    for i in range(gx0, gx1 + 1):
+        t = (i - gx0) / span * 2 - 1
+        cy = deck + 1 + (tower - deck - 1) * t * t
+        extra.append((i, -int(cy)))
+        if i % 3 == 0:
+            for k in range(deck + 1, int(cy)):
+                if k % 2 == 0:
+                    extra.append((i, -k))
+    for i in range(int(w * 0.78), gx0):
+        t = (gx0 - i) / max(1, gx0 - int(w * 0.78))
+        extra.append((i, -int(tower - (tower - deck) * t)))
+    lights = []
+    for i in range(w):
+        for k in range(2, hgt[i] - 1):
+            if rnd.random() < 0.06:
+                lights.append((i, k, rnd.choice(((130, 90, 40), (150, 40, 110), (60, 110, 140))), rnd.random()))
+    beacons = [(tx, th + max(2, int(S * 0.05))), (sx, sh_ + 1), (ux, base + mast + 3), (gx0, tower), (gx1, tower)]
+    return hgt, extra, lights, beacons
+
+
 class Mode:
     def __init__(self, w, h):
         self.w, self.h = w, h
-        self.rain = Rain(w, h, step=6)
         self.glitch = Glitch(0.015)
         self.typer = Typer(TAGLINES)
         self.fx = PostFX()
         self.particles = Particles()
         self.ticker = Ticker("DEDSEC NEWS", NEWS)
-        self.stickers = [Sticker(w, h, random.choice(STICKERS)) for _ in range(2 if w > 120 else 1)]
         self.frame = 0
         self.last = time.time()
         self.followers = random.randint(1200, 4800)
 
         scale = 2 if w >= 100 else 1
         word = build_word("DEDSEC", scale)
-        skull = ["".join(("█" if p == "X" else " ") * scale for p in row) for row in SKULL]
-        show_skull = h >= len(skull) + len(word) + 16
-        total = len(word) + 8 + (len(skull) + 2 if show_skull else 0)
-        top = max(3, (h - total) // 2)
-        self.box = (0, top - 1, 0, total + 2)
+        # vertical layout: skull + word sit in the sky, the horizon at ~60%
+        sr = min(int(h * 0.36), int(h * 0.6) - 11)
+        show_skull = sr >= 8 and w >= 60
+        sr = sr if show_skull else 0
+        content = (sr + 1 if show_skull else 0) + 5 + 2
+        hz = self.hz = max(int(h * 0.6), content + 4)
+        top = max(3, hz - content)
+        self.rain = Rain(w, hz, step=9)
+        self.stickers = [Sticker(w, h, random.choice(STICKERS), bottom=h - hz + 1)] if w > 150 else []
 
-        # every filled cell of the logo becomes a "fragment" that can fly around
+        # every filled cell of the word becomes a "fragment" that can fly around
         self.cells = []
-        y = top
+        self.skull = []
+        sw = 0
         if show_skull:
-            left = (w - len(skull[0])) // 2
-            for r, row in enumerate(skull):
-                for c, ch in enumerate(row):
-                    if ch != " ":
-                        self.cells.append((left + c, y + r, ch, "skull"))
-            y += len(skull) + 2
+            sh = 2 * sr
+            sw = int(sh * 1.08) // 2 * 2
+            left = (w - sw) // 2
+            # (cell x, cell y, palette index, pixel u, v) for each skull pixel
+            self.skull = [(left + u, top + v / 2, k) for (u, v, k) in make_skull(sw, sh)]
+            self.skull_left, self.skull_top, self.skull_w = left, top, sw
+            y = top + sr + 1
+        else:
+            y = top
         self.word_top = y
         left = (w - len(word[0])) // 2
         self.word_left, self.word_w = left, len(word[0])
@@ -267,24 +475,24 @@ class Mode:
             for c, ch in enumerate(row):
                 if ch != " ":
                     self.cells.append((left + c, y + r, ch, "word"))
-        self.tag_y = y + len(word) + 3
-        bw = max(len(word[0]), len(skull[0]) if show_skull else 0, 44) + 10
-        self.box = ((w - bw) // 2, top - 1, bw, total + 2)
+        self.tag_y = h - 3
+        bw = max(len(word[0]), sw, 44) + 10
+        self.box = ((w - bw) // 2, top - 1, bw, hz - top + 1)
+        total = y + 5 - top
         self.center = (w / 2, top + total / 2)
         self.orbit = (bw / 2 + 4, total / 2 + 2)
-        self.panels = Panels(w, h, keepout=[self.box], max_panels=7)
-        self.floor = Floor(w, h, horizon=min(0.85, (self.tag_y + 2) / h), color=PURPLE)
+        self.panels = Panels(w, h, keepout=[self.box], max_panels=4 if w > 150 else 3, bottom=h - hz + 1,
+                             kinds=["spark", "eq", "wave", "decrypt", "loaders", "bars", "cam", "radar"])
 
-        bottom_drips = [c for c in self.cells if c[3] == "word" and c[1] == y + len(word) - 1]
-        self.drips = [{"x": c[0], "y": c[1] + 1, "len": 0.0, "max": random.randint(1, 3),
+        bottom_drips = [c for c in self.cells if c[1] == y + len(word) - 1]
+        self.drips = [{"x": c[0], "y": c[1] + 1, "len": 0.0, "max": random.randint(1, 2),
                        "speed": random.uniform(0.6, 2.0)} for c in bottom_drips if random.random() < 0.2]
 
         # synthwave sky + sun sitting on the horizon behind the logo
-        self.hz = hz = int(self.floor.cam.cy)
-        self.sky_top, self.sky_bot = (10, 2, 22), (70, 12, 70)
-        self.sky = [blend(self.sky_top, self.sky_bot, y / max(1, hz)) for y in range(hz + 1)] + [None] * (h - hz)
+        self.sky_top, self.sky_bot = (10, 2, 22), (78, 14, 76)
+        self.sky = [blend(self.sky_top, self.sky_bot, (y / max(1, hz)) ** 1.4) for y in range(hz + 1)] + [None] * (h - hz)
         self.sky_rows = [[c] * w for c in self.sky[:hz + 1]]
-        r = max(8.0, min((hz - top + 1) * 2 * 0.95, bw * 0.46))
+        r = max(8.0, min(bw * 0.46, (hz - 2) * 2 * 0.8))
         self.sun = (w / 2, 2 * hz - r * 0.22, r)
         cx, cy, r = self.sun
         self.sun_rows = []
@@ -296,29 +504,39 @@ class Mode:
             v = (py - (cy - r)) / (2 * r)
             col = blend(PINK, ORANGE, v / 0.45) if v < 0.45 else blend(ORANGE, YELLOW, (v - 0.45) / 0.4)
             self.sun_rows.append((py, max(0, int(cx - span)), min(w, int(cx + span) + 1), v, col))
+        self.sun_by_py = {row[0]: row for row in self.sun_rows}
         # halo around the sun, baked into the sky background
         for y in range(hz + 1):
             row = self.sky_rows[y]
             for x in range(w):
                 d = math.hypot((x - cx), (2 * y + 1 - cy)) - r
-                if 0 < d < r * 0.35:
-                    row[x] = blend(row[x], (150, 20, 90), 0.35 * (1 - d / (r * 0.35)) ** 2)
-        # Thin horizontal haze follows sky altitude; stars live above the sun.
+                if 0 < d < r * 0.45:
+                    row[x] = blend(row[x], (160, 24, 96), 0.4 * (1 - d / (r * 0.45)) ** 2)
         for y, row in enumerate(self.sky_rows):
             for x in range(w):
-                if y < hz*.48 and (x*73+y*151)%433 == 0:
+                if y < hz * .48 and (x * 73 + y * 151) % 433 == 0:
                     row[x] = (83, 68, 115)
-                elif y > hz*.45:
-                    k = .05*(.5+.5*math.sin(x*.045 + y*.73))
+                elif y > hz * .45:
+                    k = .05 * (.5 + .5 * math.sin(x * .045 + y * .73))
                     row[x] = blend(row[x], (160, 43, 100), k)
         self.sun_t = 0.0
-        self.cut = (2 * self.tag_y - 1, 2 * self.tag_y + 3)
         self.plate = (2 * self.word_top - 2, 2 * (self.word_top + 5) + 1, self.word_left - 4, self.word_left + self.word_w + 2)
 
+        self.build_floor()
+        self.build_skyline()
+        self.palms = []
+        if w >= 120:
+            hp = self.hp
+            base = hp + int(self.dmax * 0.55)
+            ph = min(base - int(hz * 0.85), int(h * 0.9))
+            self.palms = [(w * 0.045, base, ph, 1), (w * 0.955, base, ph, -1)]
+        self.palm_cache = {}
+        self.cars = []
+        self.word_front = []
+
         # graffiti walls on both sides of the logo
-        gy0, gy1 = 7, 2 * hz - 3
-        regions = [(2, gy0, bx0 - 2, gy1) for bx0 in [self.box[0]]] + \
-                  [(self.box[0] + self.box[2] + 2, gy0, w - 3, gy1)]
+        gy0, gy1 = 7, 2 * hz - 3 - int(hz * 0.4)
+        regions = [(2, gy0, self.box[0] - 2, gy1), (self.box[0] + self.box[2] + 2, gy0, w - 3, gy1)]
         self.graffiti = [Graffiti(rg, self.panels) for rg in regions if rg[2] - rg[0] >= 12 and rg[3] - rg[1] >= 14]
 
         self.bolt = None
@@ -327,6 +545,282 @@ class Mode:
         self.orb_t = self.floor_t = 0.0
         self.bump = 0.0
         self.start_assembly(time.time())
+
+    # ------------------------------------------------------------ floor: grid, reflections, cars
+    def build_floor(self):
+        w, h, hz = self.w, self.h, self.hz
+        self.hp = hp = 2 * hz + 1                      # horizon pixel row
+        self.pbot = pbot = 2 * (h - 1) - 1              # last floor pixel above the ticker
+        self.dmax = dmax = max(2, pbot - hp)
+        self.floor_bg = []
+        for y in range(hz + 1, h):
+            t = min(1.0, (2 * y + 1 - hp) / dmax)
+            self.floor_bg.append([blend((46, 8, 54), (4, 0, 10), t ** 0.5)] * w)
+        self.g = max(10.0, w / 6.5)                     # grid spacing at the bottom row
+        self.zs = 4.0
+        self.vcol, self.hcol, self.glow, self.vfar = [None], [None], [None], [None]
+        for d in range(1, dmax + 1):
+            u = d / dmax
+            f = u ** 0.7
+            self.vcol.append(blend((70, 14, 80), (255, 40, 200), f))
+            self.hcol.append(blend((64, 14, 74), (240, 70, 210), f ** 0.8))
+            self.glow.append(blend((40, 6, 46), (92, 14, 88), f))
+            self.vfar.append(blend((50, 10, 60), (150, 26, 130), f))
+        # floor row d -> colour of the floor background there (for reflections)
+        self.fbg = [None] + [self.floor_bg[min(len(self.floor_bg) - 1, (hp + d) // 2 - hz - 1)][0] for d in range(1, dmax + 1)]
+        self.horizon = [blend((255, 140, 220), WHITE, 0.25), (255, 60, 170)]
+
+    def build_skyline(self):
+        w, hp = self.w, self.hp
+        sky_px = 2 * self.hz
+        hgt, extra, lights, beacons = make_skyline(w, sky_px)
+        self.sky_h = hgt
+        top = hp - 2                                    # skyline stands on the horizon line
+        self.sky_top_px = top
+        maxh = max(hgt) if hgt else 0
+        runs = []
+        for k in range(maxh):
+            row, x = [], 0
+            while x < w:
+                if hgt[x] > k:
+                    x0 = x
+                    while x < w and hgt[x] > k:
+                        x += 1
+                    row.append((x0, x))
+                else:
+                    x += 1
+            runs.append(row)
+        self.sky_runs = runs
+        self.sky_extra = [(x, top + dy) for (x, dy) in extra if 0 <= x < w and top + dy >= 0]
+        cx, cy, r = self.sun
+        rim = []
+        for x in range(w):
+            if hgt[x]:
+                py = top - hgt[x] + 1
+                lit = abs(x - cx) < r * 1.05
+                rim.append((x, py, (190, 60, 110) if lit else (96, 30, 104)))
+        self.sky_rim = rim
+        self.sky_lights = [(x, top - k, c, ph) for (x, k, c, ph) in lights]
+        self.beacons = [(x, top - k) for (x, k) in beacons if 0 <= x < w]
+        self.silhouette = (14, 3, 26)
+
+    def draw_skyline(self, s, now):
+        pt, pb = s.pt, s.pb
+        top, col, w = self.sky_top_px, self.silhouette, self.w
+        for k, row in enumerate(self.sky_runs):
+            py = top - k
+            if py < 0:
+                break
+            layer = (pb if py & 1 else pt)[py >> 1]
+            for x0, x1 in row:
+                layer[x0:x1] = [col] * (x1 - x0)
+        for x, py in self.sky_extra:
+            (pb if py & 1 else pt)[py >> 1][x] = col
+        for x, py, c in self.sky_rim:
+            (pb if py & 1 else pt)[py >> 1][x] = c
+        tick = now * 0.4
+        for x, py, c, ph in self.sky_lights:
+            if (tick + ph) % 1.0 < 0.93:
+                (pb if py & 1 else pt)[py >> 1][x] = c
+        if int(now * 1.2) % 2 == 0:
+            for x, py in self.beacons:
+                if 0 <= py < 2 * self.hz:
+                    (pb if py & 1 else pt)[py >> 1][x] = (255, 40, 60)
+
+    def spawn_car(self, near=False):
+        oncoming = random.random() < 0.55
+        lane = random.choice((-2.5, -1.5, -0.5)) if oncoming else random.choice((0.5, 1.5, 2.5))
+        z = random.uniform(30, 70) if oncoming else self.zs * 0.9
+        if near:
+            z = random.uniform(self.zs * 1.2, 60)
+        self.cars.append({"lane": lane, "z": z, "dir": -1 if oncoming else 1,
+                          "v": random.uniform(5, 13), "len": random.uniform(2, 5)})
+
+    def draw_floor(self, s, now, dt):
+        w, h, hz = self.w, self.h, self.hz
+        hp, dmax, zs, g = self.hp, self.dmax, self.zs, self.g
+        pt, pb = s.pt, s.pb
+        for i, row in enumerate(self.floor_bg):
+            s.bg[hz + 1 + i] = row[:]
+        cx = w / 2
+        off = math.sin(now * 0.21) * g * 0.7
+        t = now
+        # reflection of the sun (streaky, rippled) and the skyline/logo silhouettes
+        sun_by_py = self.sun_by_py
+        scroll = self.sun_t
+        band = int(t * 3)
+        ripple = [0] + [int(round(math.sin(d * 0.72 + t * 2.3) * (0.4 + 1.4 * d / dmax))) for d in range(1, dmax + 1)]
+        for d in range(1, dmax + 1):
+            py = hp + d
+            if py > self.pbot:
+                break
+            src = hp - 2 - int(d * 0.8)
+            row = sun_by_py.get(src)
+            if row is None or d > dmax * 0.7 or ((d + band) % 6 == 0 and d > 3):
+                continue
+            _, x0, x1, v, col = row
+            if v > 0.42 and (src + scroll) % 7 < 0.7 + (v - 0.42) * 7.5:
+                continue
+            fade = 0.3 + 0.6 * (d / (dmax * 0.7)) ** 0.8
+            c = blend(blend(col, PINK, 0.2), self.fbg[d], fade)
+            dx = ripple[d]
+            shrink = int((x1 - x0) * 0.22 * d / dmax)
+            a, b = max(0, x0 + dx + shrink), min(w, x1 + dx - shrink)
+            if b > a:
+                (pb if py & 1 else pt)[py >> 1][a:b] = [c] * (b - a)
+        # the word mirrored on the wet grid
+        refl = blend(PINK, (60, 10, 60), 0.55)
+        for (px, cy_) in self.word_front:
+            for sp in (2 * cy_, 2 * cy_ + 1):
+                d = int((hp - sp) * 1.25)
+                py = hp + d
+                if 1 <= d <= dmax and py <= self.pbot and (d + band) % 5:
+                    x = px + ripple[d]
+                    if 0 <= x < w:
+                        (pb if py & 1 else pt)[py >> 1][x] = refl
+        # horizontal grid lines rushing towards us
+        fz = self.floor_t
+        last, drawn = None, -9
+        hcol, vcol, glow = self.hcol, self.vcol, self.glow
+        for d in range(1, dmax + 1):
+            py = hp + d
+            if py > self.pbot:
+                break
+            idx = int(zs * dmax / d + fz)
+            if idx != last and last is not None and d - drawn > 2 + d * 0.08:
+                (pb if py & 1 else pt)[py >> 1][:] = [hcol[d]] * w
+                drawn = d
+            last = idx
+        # vertical grid lines converging on the vanishing point
+        n = 9
+        side_fade = w * 0.3
+        vfar = self.vfar
+        rows = [(d, hp + d, (pb if (hp + d) & 1 else pt)[(hp + d) >> 1]) for d in range(1, min(dmax, self.pbot - hp) + 1)]
+        glow_from = dmax * 0.45
+        for i in range(-n, n + 1):
+            X = i * g - off
+            step = X / dmax
+            if step > 3.0 or step < -3.0:
+                continue                                 # too shallow: reads as clutter
+            px_prev = cx + step
+            for d, py, layer in rows:
+                xx = cx + step * d
+                if xx < px_prev:
+                    a, b = int(xx), int(px_prev)
+                else:
+                    a, b = int(px_prev), int(xx)
+                px_prev = xx
+                if b < 0 or a >= w:
+                    continue
+                if a < 0:
+                    a = 0
+                if b > w - 1:
+                    b = w - 1
+                if d > glow_from and a == b:
+                    gc = glow[d]
+                    if a > 0:
+                        layer[a - 1] = gc
+                    if a < w - 1:
+                        layer[a + 1] = gc
+                c = vfar[d] if (xx - cx > side_fade or cx - xx > side_fade) else vcol[d]
+                if a == b:
+                    layer[a] = c
+                else:
+                    layer[a:b + 1] = [c] * (b - a + 1)
+        # horizon: a hot neon line where floor meets sky
+        hc0, hc1 = self.horizon
+        pt_row = pt[hz]
+        pb_row = pb[hz]
+        pt_row[:] = [hc0] * w
+        pb_row[:] = [hc1] * w
+        s.bg[hz] = [hc1] * w
+        # light trails: cars racing along the grid lanes
+        spd = 1 + 1.5 * DATA.level
+        if len(self.cars) < (7 if w > 120 else 4) and random.random() < 0.08:
+            self.spawn_car()
+        alive = []
+        for c in self.cars:
+            c["z"] += c["dir"] * c["v"] * spd * dt
+            if c["z"] < zs * 0.85 or c["z"] > 80:
+                continue
+            alive.append(c)
+            oncoming = c["dir"] < 0
+            head_c = (235, 250, 255) if oncoming else (255, 50, 80)
+            tail_c = (0, 140, 200) if oncoming else (150, 10, 70)
+            z0 = c["z"]
+            z1 = z0 + c["len"] if oncoming else max(zs * 0.8, z0 - c["len"])
+            for lat in (-0.16, 0.16):
+                X = (c["lane"] + lat) * g - off
+                d0, d1 = zs * dmax / z0, zs * dmax / z1
+                lo, hi = int(min(d0, d1)), int(max(d0, d1))
+                for d in range(max(1, lo), min(dmax, hi) + 1):
+                    py = hp + d
+                    if py > self.pbot:
+                        break
+                    q = (d - d1) / (d0 - d1) if d0 != d1 else 1.0
+                    x = int(cx + X * d / dmax)
+                    if 0 <= x < w:
+                        (pb if py & 1 else pt)[py >> 1][x] = blend(tail_c, head_c, q * q)
+                hd = int(d0)
+                py = hp + hd
+                x = int(cx + X * hd / dmax)
+                if 1 <= hd <= dmax and py <= self.pbot and 0 <= x < w:
+                    (pb if py & 1 else pt)[py >> 1][x] = WHITE if oncoming else (255, 120, 140)
+        self.cars = alive
+
+    def palm_pixels(self, bx, by, ph, side, sway):
+        """Silhouette of one palm: curved ringed trunk and feathery drooping fronds."""
+        sil, rim, ring = (9, 1, 17), (170, 40, 150), (80, 18, 84)
+        pix = {}
+        lean = -side * ph * 0.22
+        crown = (bx, by)
+        for k in range(ph):
+            t = k / ph
+            x = bx + lean * t ** 1.7
+            wdt = 2 if t > 0.5 else 3
+            py = by - k
+            x0 = int(x) - wdt // 2
+            for j in range(wdt):
+                pix[(x0 + j, py)] = sil
+            pix[(x0 + (wdt - 1 if side > 0 else 0), py)] = rim if k % 3 else ring
+            crown = (x, py)
+        cx_, cy_ = crown
+        L = max(6.0, min(ph * 0.4, self.w * 0.07))
+        for n, a0 in enumerate((-2.95, -2.5, -2.05, -1.62, -1.15, -0.7, -0.25, 0.2, 2.95 + 0.0)):
+            a = a0 + sway * (1 if n % 2 else -0.6)
+            ca, sa = math.cos(a), math.sin(a)
+            steps = int(L * 1.6)
+            out = 1 if ca >= 0 else -1
+            for k in range(steps):
+                q = k / steps
+                dist = q * L
+                x = cx_ + ca * dist * 1.2
+                y = cy_ + sa * dist * 0.8 + q * q * L * 0.9
+                xi, yi = int(x), int(y)
+                pix[(xi, yi)] = sil
+                if q < 0.5:
+                    pix[(xi, yi + 1)] = sil
+                if 0.08 < q < 0.97:
+                    ln = int(1 + 3.2 * (1 - q))
+                    for j in range(1, ln + 1):
+                        pix[(xi + out * (j // 2), yi + j)] = sil
+                if q < 0.9 and (xi, yi - 1) not in pix:
+                    pix[(xi, yi - 1)] = rim if q < 0.6 else ring
+        for dx, dy in ((-1, 2), (1, 2), (0, 3)):
+            pix[(int(cx_) + dx, int(cy_) + dy)] = (36, 8, 34)
+        W, PH = self.w, 2 * self.h - 2
+        return [(x, py, c) for (x, py), c in pix.items() if 0 <= x < W and 0 <= py < PH]
+
+    def draw_palms(self, s, now):
+        pt, pb = s.pt, s.pb
+        for i, (bx, by, ph, side) in enumerate(self.palms):
+            q = int((math.sin(now * 0.7 + bx) + 1) * 3.5)
+            key = (i, q)
+            pix = self.palm_cache.get(key)
+            if pix is None:
+                pix = self.palm_cache[key] = self.palm_pixels(bx, by, ph, side, (q / 7 - 0.5) * 0.12)
+            for x, py, c in pix:
+                (pb if py & 1 else pt)[py >> 1][x] = c
 
     # ------------------------------------------------------------ sky, sun, lightning
     def draw_sky(self, s):
@@ -343,8 +837,6 @@ class Mode:
         glow = 0.8 + 0.15 * self.bump + 0.08 * DATA.level + 0.3 * self.flash
         scroll = self.sun_t
         for (py, x0, x1, v, col) in self.sun_rows:
-            if self.cut[0] <= py < self.cut[1]:
-                continue
             if v > 0.42:
                 gap = 0.7 + (v - 0.42) * 7.5
                 if (py + scroll) % 7 < gap:
@@ -381,7 +873,7 @@ class Mode:
         if end >= hzp * 0.93:
             self.particles.burst(x, self.hz, 30, (WHITE, CYAN, PURPLE), speed=14, gravity=8)
 
-    def draw_bolt(self, s, now, clip=None):
+    def draw_bolt(self, s, now):
         b = self.bolt
         age = now - b["t"]
         if age < 0.07 or 0.13 < age < 0.5:
@@ -391,15 +883,14 @@ class Mode:
             for path, c, hc in ((b["main"], core, halo), *((br, blend(core, PURPLE, 0.4), None) for br in b["br"])):
                 for (ax, ay), (bx, by) in zip(path, path[1:]):
                     for (x, y) in line_points(int(ax), int(ay), int(bx), int(by)):
-                        if clip and not (clip[0] <= x < clip[1] and clip[2] <= y < clip[3]):
-                            continue
                         if hc:
                             s.pixel(x - 1, y, hc)
                             s.pixel(x + 1, y, hc)
                         s.pixel(x, y, c)
 
+    # ------------------------------------------------------------ the logo in 3D
     def set_view(self, now):
-        yaw = math.sin(now * 0.45) * 0.75
+        yaw = math.sin(now * 0.45) * 0.5
         pitch = math.sin(now * 0.31) * 0.25
         self.rot = (math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch))
         self.yaw = yaw
@@ -414,11 +905,76 @@ class Mode:
         k = 70 / (70 + Z) * (1 + 0.035 * self.bump)
         return int(cx + X * 2 * k), int(cy + Y * k)
 
+    def proj_px(self, x, y, z):
+        """Like proj, but returns a half-block pixel row for sub-cell placement."""
+        cx, cy = self.center
+        cyw, syw, cp, sp = self.rot
+        X, Y, Z = (x - cx) * 0.5, y - cy, z
+        X, Z = X * cyw + Z * syw, -X * syw + Z * cyw
+        Y, Z = Y * cp - Z * sp, Y * sp + Z * cp
+        k = 70 / (70 + Z) * (1 + 0.035 * self.bump)
+        return int(cx + X * 2 * k), int(2 * (cy + Y * k))
+
+    def skull_palette(self, now, light):
+        pal = [(int(c[0] * light), int(c[1] * light), int(c[2] * light)) for c in SKULL_BASE]
+        eye = blend((200, 0, 90), WHITE, 0.15 + 0.5 * self.bump) if (now * 0.9) % 6 > 0.25 else (40, 0, 20)
+        pal[EYE] = blend(eye, PINK, 0.2 + 0.2 * pulse(now, 3))
+        pal[SOCKET] = SKULL_BASE[SOCKET]
+        pal[OUTLINE] = SKULL_BASE[OUTLINE]
+        return pal
+
+    def draw_skull(self, s, now, glitch):
+        if not self.skull:
+            return
+        cx, cy = self.center
+        cyw, syw, cp, sp = self.rot
+        bump = 1 + 0.035 * self.bump
+        dX, dY, dZ = syw, -cyw * sp, cyw * cp
+        W, PH = s.w, 2 * s.h
+        pt, pb = s.pt, s.pb
+        base = []
+        for (x, y, k) in self.skull:
+            X = (x - cx) * 0.5
+            Y = y - cy
+            Z1 = -X * syw
+            base.append((X * cyw, Y * cp - Z1 * sp, Y * sp + Z1 * cp, k))
+        # extruded bone thickness, back to front
+        ring = [p for p in base if p[3] == OUTLINE]
+        for depth, col in ((2.4, (24, 6, 38)), (1.8, (36, 12, 54)), (1.2, (50, 20, 74)), (0.6, (64, 30, 92))):
+            ox, oy, oz = dX * depth, dY * depth, dZ * depth
+            for (X, Y, Z, k) in ring:
+                kk = 70 / (70 + Z + oz) * bump
+                px, py = int(cx + (X + ox) * 2 * kk), int(2 * (cy + (Y + oy) * kk))
+                if 0 <= px < W and 0 <= py < PH:
+                    (pb if py & 1 else pt)[py >> 1][px] = col
+        light = 0.6 + 0.4 * (0.5 + 0.5 * math.cos(self.yaw * 2))
+        pal = self.skull_palette(now, light)
+        offsets = {}
+        shine = ((now * 60) % (self.w + 80)) - 40 - (self.w // 2 - self.word_w // 2)
+        sl = self.skull_left
+        for (X, Y, Z, k), (x, y, _) in zip(base, self.skull):
+            kk = 70 / (70 + Z) * bump
+            px, py = int(cx + X * 2 * kk), int(2 * (cy + Y * kk))
+            if glitch:
+                o = offsets.get(py >> 2)
+                if o is None:
+                    o = offsets[py >> 2] = random.randint(-4, 4) if random.random() < 0.3 else 0
+                px += o
+            col = pal[k]
+            if k < 8:
+                dd = abs((x - sl) * 0.6 - shine * 0.6 + (y - self.skull_top) * 2)
+                if dd < 4:
+                    col = blend(col, WHITE, 0.6 * (1 - dd / 4))
+            if 0 <= px < W and 0 <= py < PH - 1:
+                (pb if py & 1 else pt)[py >> 1][px] = col
+                if kk > 1.0:
+                    py += 1
+                    (pb if py & 1 else pt)[py >> 1][px] = col
+
     def draw_logo(self, s, cells, now, glitch):
         cx, cy = self.center
         cyw, syw, cp, sp = self.rot
         bump = 1 + 0.035 * self.bump
-        # rotate every cell once; depth offsets are linear in z
         dX, dY, dZ = syw, -cyw * sp, cyw * cp
         base = []
         for (x, y, ch, kind) in cells:
@@ -428,21 +984,20 @@ class Mode:
             base.append((X * cyw, Y * cp - Z1 * sp, Y * sp + Z1 * cp))
         W, H = s.w, s.h
         chs, fgs = s.ch, s.fg
-        # extrusion: back layers first, dark, then the lit front face
-        for depth in (4, 3, 2, 1):
-            shade = 0.45 + depth * 0.1
-            cw, cs = blend(PURPLE, BLACK, shade), blend(GREY, BLACK, shade)
+        for depth in (3, 2, 1):
+            cw = blend((70, 10, 70), BLACK, 0.2 + depth * 0.2)
             ox, oy, oz = dX * depth, dY * depth, dZ * depth
-            for (X, Y, Z), cell in zip(base, cells):
+            for (X, Y, Z) in base:
                 k = 70 / (70 + Z + oz) * bump
                 px, py = int(cx + (X + ox) * 2 * k), int(cy + (Y + oy) * k)
                 if 0 <= px < W and 0 <= py < H:
                     chs[py][px] = "█"
-                    fgs[py][px] = cw if cell[3] == "word" else cs
+                    fgs[py][px] = cw
         front = []
         for (X, Y, Z) in base:
             k = 70 / (70 + Z) * bump
             front.append((int(cx + X * 2 * k), int(cy + Y * k)))
+        self.word_front = front
         offsets = {}
         if glitch:
             for (x, y, ch, kind), (px, py) in zip(cells, front):
@@ -450,20 +1005,14 @@ class Mode:
                     offsets[y] = random.randint(-5, 5) if random.random() < 0.3 else 0
                 s.put(px - 2 + offsets[y], py, ch, CYAN)
                 s.put(px + 2 + offsets[y], py, ch, PINK)
-        light = 0.55 + 0.45 * (0.5 + 0.5 * math.cos(self.yaw * 2))
+        light = 0.78 + 0.22 * (0.5 + 0.5 * math.cos(self.yaw * 2))
         rows = {}
         shine = ((now * 60) % (self.w + 80)) - 40
         sx0 = self.w // 2 - self.word_w // 2
         for (x, y, ch, kind), (px, py) in zip(cells, front):
-            key = (y, kind)
-            col = rows.get(key)
+            col = rows.get(y)
             if col is None:
-                col = rows[key] = self.color(x, y, kind, now, False, shine=False)
-            grain = (x * 17 + y * 31) % 29
-            if grain < 3:
-                col = blend(col, (45,12,54), .26)
-            elif grain == 8:
-                col = blend(col, WHITE, .25)
+                col = rows[y] = self.color(x, y, kind, now, False, shine=False)
             d = abs((x - sx0) - shine + (y - self.word_top) * 3)
             if d < 6:
                 col = blend(col, WHITE, 1 - d / 6)
@@ -477,6 +1026,7 @@ class Mode:
     def start_assembly(self, now):
         self.phase, self.phase_t = "in", now
         self.starts = [(random.uniform(-20, self.w + 20), random.uniform(-10, self.h + 10), random.uniform(-60, 40)) for _ in self.cells]
+        self.skull_starts = [(random.uniform(-20, self.w + 20), random.uniform(-10, self.hz), random.uniform(-60, 40)) for _ in self.skull]
 
     def explode(self, now):
         cx, cy = self.center
@@ -485,18 +1035,24 @@ class Mode:
             a = math.atan2(y - cy, (x - cx) / 2) + random.uniform(-0.4, 0.4)
             v = random.uniform(10, 40)
             self.particles.add(x, y, math.cos(a) * v * 2, math.sin(a) * v, random.uniform(0.6, 1.6),
-                               ch if random.random() < 0.6 else "▓▒░", PINK if kind == "word" else WHITE, gravity=6)
+                               ch if random.random() < 0.6 else "▓▒░", PINK, gravity=6)
+        pal = self.skull_palette(now, 1.0)
+        for (x0, y0, k) in self.skull[::3]:
+            if k == OUTLINE:
+                continue
+            x, y = self.proj(x0, y0, 0)
+            a = math.atan2(y - cy, (x - cx) / 2) + random.uniform(-0.5, 0.5)
+            v = random.uniform(8, 36)
+            self.particles.add(x, y, math.cos(a) * v * 2, math.sin(a) * v, random.uniform(0.5, 1.4),
+                               "▀" if random.random() < 0.7 else "▓▒░", pal[k], gravity=6)
         self.phase, self.phase_t = "gone", now
+        self.word_front = []
         self.glitch.trigger(now, 0.4)
 
     def color(self, x, y, kind, now, glitch, shine=True):
-        base = blend(WHITE, PINK, pulse(now) * 0.6) if kind == "skull" else blend(PINK, PURPLE, (y - self.word_top) / 5)
-        # Screen-printed face: bevel highlights, worn pigment, and inset scratches.
-        grain = (x * 17 + y * 31) % 29
-        if grain < 3:
-            base = blend(base, (45, 12, 54), .26)
-        elif grain == 8:
-            base = blend(base, WHITE, .25)
+        # Bright screen-printed face: pale pink cap fading to hot pink, so the
+        # letters separate cleanly from their dark extruded sides.
+        base = blend((255, 170, 225), (255, 20, 130), (y - self.word_top) / 4)
         if y == self.word_top:
             base = blend(base, WHITE, .35)
         if shine:
@@ -521,6 +1077,8 @@ class Mode:
                     continue
                 x = cx + math.cos(a) * rx * (1 + 0.08 * i)
                 y = cy + math.sin(a) * ry * (1 + 0.05 * i) * math.cos(now * 0.2 + i)
+                if y > self.hz - 1:
+                    continue
                 col = blend(NEON[i % len(NEON)], BLACK, k / 8 + (0 if front else 0.4))
                 s.put(int(x), int(y), "●" if k == 0 else "•" if k < 3 else "·", col)
 
@@ -534,10 +1092,20 @@ class Mode:
             self.followers += random.randint(1, 37)
         fol = "FOLLOWERS: {:,}".format(self.followers)
         s.text(w - len(fol) - 2, 1, fol, YELLOW)
-        # threat meter
         lvl = int(pulse(now, 0.8) * 10)
         meter = "THREAT " + "".join("▰" if i < lvl else "▱" for i in range(10))
         s.text((w - len(meter)) // 2, 0, meter, blend(YELLOW, PINK, lvl / 10))
+
+    def draw_tagline(self, s, now, glitch):
+        txt, full = self.typer.current(now)
+        x = (self.w - len(full)) // 2
+        y = self.tag_y
+        plate = (12, 2, 22)
+        for i in range(max(0, x - 4), min(self.w, x + len(full) + 3)):
+            s.bg[y][i] = plate
+            s.ch[y][i] = " "
+            s.pt[y][i] = s.pb[y][i] = None
+        self.typer.draw(s, y, now, glitch=glitch)
 
     def farewell(self, s, now, t):
         from cinematic import exit_scene
@@ -549,7 +1117,7 @@ class Mode:
         beat, level = DATA.beat, DATA.level
         self.bump = max(beat, self.bump - dt * 4)
         self.orb_t += dt * (0.8 + 1.4 * level + 1.5 * self.bump)
-        self.floor_t += dt * (3 + 9 * level)
+        self.floor_t += dt * (1.6 + 4 * level)
         self.sun_t += dt * (3 + 4 * level)
 
         if self.bolt is None and now > self.next_bolt:
@@ -563,9 +1131,19 @@ class Mode:
                 self.next_bolt = now + random.uniform(5, 16)
 
         self.draw_sky(s)
+        self.rain.draw(s)
+        # rain belongs to the sky outside the logo; wipe it from the box and the floor
+        bx, by, bw, bh = self.box
+        for y in range(max(0, by), min(self.h, by + bh)):
+            s.ch[y][bx:bx + bw] = [" "] * bw
+        for y in range(self.hz, self.h):
+            s.ch[y] = [" "] * self.w
         if self.bolt:
             self.draw_bolt(s, now)
-        self.rain.draw(s)
+        self.draw_sun(s, now)
+        self.draw_skyline(s, now)
+        self.draw_floor(s, now, dt)
+        self.draw_palms(s, now)
         for g in self.graffiti:
             g.update(s, now, dt, self.particles, self.sky)
         for st in self.stickers:
@@ -573,17 +1151,15 @@ class Mode:
         self.panels.draw(s, now)
 
         self.set_view(now)
-        bx, by, bw, bh = self.box
-        s.fill(bx, by, bw, bh)
-        self.draw_sun(s, now)
-        if self.bolt:
-            self.draw_bolt(s, now, clip=(bx, bx + bw, 2 * by, 2 * (by + bh)))
-        self.floor.draw(s, self.floor_t, speed=1, sway=math.sin(now * 0.3) * 0.05)
         self.draw_orbit(s, now, front=False)
 
         age = now - self.phase_t
         if self.phase == "in":
             t = ease_out(age / 1.6)
+            pal = self.skull_palette(now, 1.0)
+            for (x, y, k), (sx, sy, sz) in zip(self.skull, self.skull_starts):
+                px, py = self.proj_px(sx + (x - sx) * t, sy + (y - sy) * t, sz * (1 - t))
+                s.pixel(px, py, pal[k] if t > 0.9 else blend(CYAN, pal[k], t))
             for (x, y, ch, kind), (sx, sy, sz) in zip(self.cells, self.starts):
                 px, py = self.proj(sx + (x - sx) * t, sy + (y - sy) * t, sz * (1 - t))
                 s.put(px, py, ch, self.color(x, y, kind, now, glitch) if t > 0.95 else blend(CYAN, PINK, t))
@@ -591,6 +1167,7 @@ class Mode:
                 self.phase, self.phase_t = "hold", now
                 self.particles.burst(self.center[0], self.center[1], 60, speed=25)
         elif self.phase == "hold":
+            self.draw_skull(s, now, glitch)
             self.draw_logo(s, self.cells, now, glitch)
             for d in self.drips:
                 d["len"] = min(d["max"], d["len"] + d["speed"] * dt)
@@ -607,13 +1184,13 @@ class Mode:
         elif age > 1.2:
             self.start_assembly(now)
 
-        self.typer.draw(s, self.tag_y, now, glitch=glitch)
+        self.draw_tagline(s, now, glitch)
         self.draw_orbit(s, now, front=True)
         self.particles.step(s, dt)
         self.draw_hud(s, now)
         self.ticker.draw(s, self.h - 1, now)
         if self.flash > 0.6:
             for y in range(self.hz + 1):
-                s.tint_row(y, WHITE, (self.flash - 0.6) * 0.5)
-        self.fx.apply(s, now, glitch)
+                tint_row(s, y, WHITE, round((self.flash - 0.6) * 0.5, 2))
+        post_fx(s, now, glitch)
         self.frame += 1

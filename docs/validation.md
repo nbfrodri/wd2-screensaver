@@ -1,5 +1,9 @@
 # Validación
 
+Consulta también la [revisión del 2 de octubre](polish-2026-10-02.md) para los
+resultados actuales, la comprobación de descubrimiento/rotación y las
+optimizaciones posteriores. Las cifras siguientes conservan su contexto histórico.
+
 Este documento registra la validación anterior comunicada para esta versión. Durante la preparación de esta copia y su documentación no se hizo una nueva comprobación visual en vivo: ya había un salvapantallas en ejecución y se evitó interferir con él.
 
 Al preparar el repositorio se ejecutó además `tools/verify.py`: sus 42 combinaciones de modo y tamaño, con comprobaciones de cierre, pasaron. El instalador se probó en un HOME temporal: vista previa sin escrituras, conservación de ajustes ajenos y configuración existente, lectura de JSONC, copias de seguridad y segunda instalación sin cambios.

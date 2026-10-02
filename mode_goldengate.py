@@ -7,10 +7,28 @@ import time
 import numpy as np
 
 from lib import BLACK, CYAN, GREY, PINK, WHITE, YELLOW, blend
-from mode_logo import SKULL
 from sysdata import DATA
 
 NAME = "GOLDENGATE"
+
+# DedSec skull bitmap (local copy so this scene does not depend on another mode's internals)
+SKULL = [
+    "......XXXXXXXXXX......",
+    "....XXXXXXXXXXXXXX....",
+    "...XXXXXXXXXXXXXXXX...",
+    "..XXXXXXXXXXXXXXXXXX..",
+    ".XXXXXXXXXXXXXXXXXXXX.",
+    ".XXXX.X...XX...X.XXXX.",
+    ".XXXXX.X.XXXX.X.XXXXX.",
+    ".XXXX.X...XX...X.XXXX.",
+    ".XXXXXXXXX..XXXXXXXXX.",
+    "..XXXXXXXX..XXXXXXXX..",
+    "...XXXXXX....XXXXXX...",
+    "....XXXXXXXXXXXXXX....",
+    ".....X.X.X.X.X.X.X....",
+    ".....XXXXXXXXXXXXX....",
+    "......XXXXXXXXXXX.....",
+]
 
 # bridge dimensions (1 unit ~ 10 m, heights a bit exaggerated)
 TX = 64.0       # tower x
@@ -142,23 +160,24 @@ class Mode:
         r = self.rng
         # city skyline far across the water (left/back)
         self.city = []
-        x = -300.0
-        while x < 60:
+        x = -230.0
+        while x < 96:
             bw = r.uniform(5, 13)
-            h = r.uniform(6, 20) * (1.6 if -170 < x < -60 else 1.0)
+            core = max(0.0, 1 - abs(x + 20) / 80)
+            h = r.uniform(8, 22) * (1 + 1.4 * core)
             z = r.uniform(270, 340)
             self.city.append([x, x + bw, 0, h, z, z + r.uniform(6, 14)])
             x += bw + r.uniform(-2, 3)
-        self.city.append([-122, -110, 0, 52, 300, 312])            # salesforce-ish tall tower
-        self.pyramid = (-90.0, 290.0, 8.0, 44.0)                    # transamerica-ish
+        self.city.append([-16, -4, 0, 72, 292, 304])               # salesforce-ish tall tower
+        self.pyramid = (34.0, 286.0, 8.0, 58.0)                     # transamerica-ish
         self.city_P = np.array([((b[0], b[2], b[4]), (b[1], b[3], b[4])) for b in self.city], float).reshape(-1, 3)
         self.city_order = sorted(range(len(self.city)), key=lambda i: -self.city[i][4])
         # windows: points on z0 faces of city boxes
         wins, owner = [], []
         for i, (x0, x1, y0, y1, z0, z1) in enumerate(self.city):
-            for wy in np.arange(2.0, y1 - 1, 2.6):
-                for wx in np.arange(x0 + 1.5, x1 - 1, 2.8):
-                    if r.random() < 0.55:
+            for wy in np.arange(2.5, y1 - 1, 3.6):
+                for wx in np.arange(x0 + 1.5, x1 - 1, 3.4):
+                    if r.random() < 0.5:
                         wins.append((wx, wy, z0 - 0.1))
                         owner.append(i)
         self.win = np.array(wins, float) if wins else np.zeros((0, 3))
@@ -196,8 +215,30 @@ class Mode:
         # clouds: puffs far away
         self.clouds = [[r.uniform(-600, 1400), r.uniform(120, 300), r.uniform(1300, 1700), r.uniform(80, 220),
                         r.uniform(12, 30)] for _ in range(9)]
+        self.cirrus = [[r.uniform(-500, 1300), r.uniform(150, 330), r.uniform(1400, 1700), r.uniform(260, 560),
+                        r.uniform(8, 13), 0.32] for _ in range(5)]
         self.plane = None
         self.next_plane = self.t0 + r.uniform(4, 15)
+        # seagulls in screen space: [x, y, vx, flap phase, size, bob phase]
+        self.gulls = [self.new_gull(True) for _ in range(5 if self.W >= 120 else 3)]
+        # DedSec takeover of the bridge lights, and the ctOS tracker
+        self.ds_t = self.t0 + r.uniform(14, 24)
+        lx = np.arange(-ANCH, ANCH + 1, 8.0)
+        self.lamp_P = np.concatenate([np.stack([lx, np.full_like(lx, DK + 1.6), np.full_like(lx, z)], 1)
+                                      for z in (-DW, DW)])
+        self.lamp_i = np.concatenate([np.arange(len(lx)), np.arange(len(lx))])
+        self.cab_P = np.concatenate([self.cables[z][1] for z in (-DW, DW)])
+        self.cab_i = np.concatenate([np.arange(len(self.cables[-DW][1]))] * 2)
+        self.track = None
+        self.track_t = self.t0 + 5
+
+    def new_gull(self, anywhere=False):
+        r = self.rng
+        d = r.choice((-1, 1))
+        size = r.choice((1, 1, 2, 2, 3))
+        x = r.uniform(0, self.W) if anywhere else (-6 if d > 0 else self.W + 6)
+        return [x, r.uniform(self.PH * 0.12, self.PH * 0.45), d * r.uniform(3, 7) * (0.6 + 0.3 * size),
+                r.uniform(0, 6.28), size, r.uniform(0, 6.28)]
 
     @staticmethod
     def box_verts(bounds, mirror):
@@ -414,6 +455,7 @@ class Mode:
                 self.swap()
         img = self.static.copy()
         self.draw_cars(img, now)
+        self.draw_gulls(img, now)
 
         # ---- DedSec skull hologram
         sk = now - self.skull_t
@@ -431,7 +473,7 @@ class Mode:
                 y0 = self.rng.randrange(self.PH)
                 y1 = min(self.PH, y0 + self.rng.randint(1, 6))
                 img[y0:y1] = np.roll(img[y0:y1], self.rng.randint(-10, 10), axis=1)
-                img[y0:y1, :, self.rng.choice((0, 2))] += 70
+                img[y0:y1, :, self.rng.choice((0, 2))] += 45
         self.blit(s, img)
         self.hud(s, now, glitch)
 
@@ -455,10 +497,15 @@ class Mode:
             for pf in bank:
                 pf[0] += 1.6 * dt
                 pf[2] -= 4.0 * dt
-        for c in self.clouds:
+        for c in self.clouds + self.cirrus:
             c[0] += 3.0 * dt
             if c[0] > 1600:
                 c[0] = -700
+        for i, g in enumerate(self.gulls):
+            g[0] += g[2] * dt
+            g[3] += dt * (2.0 if math.sin(now * 0.45 + g[5]) > 0.35 else 9.0)
+            if g[0] < -10 or g[0] > self.W + 10:
+                self.gulls[i] = self.new_gull()
         if self.plane is None and now > self.next_plane:
             d = self.rng.choice((-1, 1))
             self.plane = [-0.6 if d > 0 else 2.2, self.rng.uniform(0.18, 0.4), d * 0.05]
@@ -535,16 +582,37 @@ class Mode:
     def stage_water(self, t, now):
         img, hor, W = self.work, self.hor, self.W
         nw = self.PH - hor
-        ri = np.arange(nw)
-        amp = 0.6 + 3.0 * (ri / max(1, nw - 1))
-        sh = np.round(amp * np.sin(ri * 1.3 + t * 2.2) + 0.6 * np.sin(ri * 0.37 - t * 1.1)).astype(int)
-        self.w_ripple = sh
-        srccol = np.clip(self.cols[None, :] - sh[:, None], 0, W - 1)
+        if nw <= 1:
+            return
+        ri = np.arange(nw, dtype=np.float32)
+        d = ri / max(1, nw - 1)                       # 0 at the horizon, 1 at the camera
+        # Perspective wave field: crests get wider apart and longer towards the camera, so the
+        # surface reads as long horizontal ripples instead of per-row noise.
+        py = (3.4 * (ri + 1.0) ** 0.62)[:, None]
+        kx = (0.16 / (1.0 + ri * 0.09))[:, None]
+        X = self.cols[None, :].astype(np.float32)
+        ph1 = py + X * kx + t * 1.9
+        ph2 = 0.57 * py - X * kx * 0.61 - t * 1.25 + 1.7
+        wave = 0.62 * np.sin(ph1) + 0.38 * np.sin(ph2)
+        slope = 0.62 * np.cos(ph1) + 0.38 * np.cos(ph2)
+        amp = (0.5 + 2.7 * d ** 1.15)[:, None]
+        disp = np.round(amp * wave).astype(int)
+        vdisp = np.round(amp * 0.45 * slope).astype(int)
+        self.w_ripple = disp[:, W // 2]
+        srccol = np.clip(self.cols[None, :] - disp, 0, W - 1)
+        srcrow = np.clip(ri.astype(int)[:, None] + vdisp, 0, nw - 1)
         water = img[hor:]
-        img[hor:] = water[ri[:, None], srccol]
-        band = (0.82 + 0.18 * np.sin(ri * 2.1 + t * 1.7)).astype(np.float32)
-        img[hor:] = img[hor:] * band[:, None, None] + self.wtop.astype(np.float32)[None, None, :] * (1 - band[:, None, None]) * 0.5
-        self.glitter(img, now)
+        warped = water[srcrow, srccol]
+        # soften the mirror vertically a touch: reflections smear on moving water
+        warped[1:] = warped[1:] * 0.7 + warped[:-1] * 0.3
+        # crest lighting: faces tilted towards the sky pick up the horizon colour, troughs darken
+        lit = np.clip(slope, -1, 1).astype(np.float32)
+        crest = np.maximum(0, lit - 0.55) * 2.2
+        shade = (0.86 + 0.14 * lit)[..., None]
+        sky = (self.hcol * (0.25 + 0.35 * self.day)).astype(np.float32)
+        img[hor:] = warped * shade + crest[..., None] * sky * (0.35 + 0.45 * d[:, None, None])
+        self.w_slope = slope
+        self.glitter(img, now, t)
         self.draw_wakes(img)
         self.draw_far(img, False)
         self.fog_prep(t)
@@ -587,7 +655,95 @@ class Mode:
             B = np.array([(tx, HT + 1.2, z) for tx in (-TX, TX) for z in (-DW, DW)])
             xs, ys, zs = self.proj(B)
             self.dots(img, xs, ys, np.array((255, 30, 30.0)))
+        ds = now - self.ds_t
+        if 0 <= ds < 4.6:
+            self.draw_ds_lights(img, now, ds)
+        elif ds >= 4.6:
+            self.ds_t = now + self.rng.uniform(32, 55)
+        self.update_track(now)
         self.pos, self.cyaw, self.syaw = pos, cyaw, syaw
+
+    def draw_ds_lights(self, img, now, ds):
+        """The deck lamps and suspender tops are taken over and chase in DedSec pink."""
+        k = int(ds * 14)
+        fade = min(1.0, ds / 0.3, (4.6 - ds) / 0.3)
+        finale = ds > 3.4
+        for P, idx, phase in ((self.lamp_P, self.lamp_i, 0), (self.cab_P, self.cab_i, 3)):
+            if finale:
+                on = np.full(len(idx), int(ds * 8) % 2 == 0)
+            else:
+                on = ((idx + phase - k) % 6) < 2
+            hot = np.array(PINK, float) * fade
+            cool = np.array(blend(PINK, (40, 0, 30), 0.75), float) * fade
+            col = np.where(on[:, None], hot, cool)
+            for mirror in (False, True):
+                xs, ys, zs = self.proj(P, mirror)
+                okz = zs > 1
+                xs, ys, c = xs[okz], ys[okz], col[okz]
+                if mirror:
+                    ri = np.clip(ys.round().astype(int) - self.hor, 0, len(self.ripple) - 1)
+                    xs = xs + self.ripple[ri]
+                    c = c * 0.45
+                self.dots(img, xs, ys, c, occl=None if mirror else self.occl)
+                self.dots(img, xs + 1, ys, c * 0.35, add=True)
+                self.dots(img, xs - 1, ys, c * 0.35, add=True)
+        B = np.array([(tx, HT + 1.2, z) for tx in (-TX, TX) for z in (-DW, DW)])
+        xs, ys, zs = self.proj(B)
+        self.dots(img, xs, ys, np.array(CYAN if k % 4 < 2 else PINK, float))
+
+    def update_track(self, now):
+        """ctOS vessel tracker: pick a boat every few seconds and keep its screen box."""
+        if now > self.track_t:
+            self.track_t = now + self.rng.uniform(11, 17)
+            vis = []
+            for i, bt in enumerate(self.boats):
+                x, y, z = self.proj(np.array((bt[0], 1.0, bt[1])))
+                if z > 5 and 8 < float(x) < self.W - 8:
+                    vis.append(i)
+            self.track = (self.rng.choice(vis), now, self.rng.randint(11, 97)) if vis else None
+        self.track_box = None
+        if self.track is None or now - self.track[1] > 6.5:
+            return
+        bt = self.boats[self.track[0]]
+        x, z, d, _, kind = bt
+        ln, hh = {"sail": (2.6, 7.0), "ferry": (6.0, 3.0), "ship": (18.0, 7.0)}[kind]
+        P = np.array([(x + a * ln, yy, z + b * 2) for a in (-1, 1) for yy in (0, hh) for b in (-1, 1)])
+        X, Y, Z = self.proj(P)
+        if (Z < 1).any():
+            return
+        self.track_box = (float(X.min()), float(Y.min()), float(X.max()), float(Y.max()), kind, bt[3])
+
+    def draw_gulls(self, img, now):
+        vis = max(self.day, self.golden * 0.9)
+        if vis < 0.12:
+            return
+        sil = self.golden > 0.45 or self.day < 0.5
+        for x, y, vx, ph, size, bob in self.gulls:
+            yy = y + math.sin(now * 0.8 + bob) * 2.0
+            f = math.sin(ph)
+            lift = 1 if f > 0.45 else (-1 if f < -0.45 else 0)
+            pts = [(0, 0)]
+            for i in range(1, size + 1):
+                if lift > 0:
+                    dy = -i
+                elif lift < 0:
+                    dy = i - 1
+                else:
+                    dy = -1 if i < size or size == 1 else 0
+                pts += [(-i, dy), (i, dy)]
+            if size >= 2:
+                pts.append((1 if vx > 0 else -1, 0))
+            ix, iy = int(round(x)), int(round(yy))
+            for dx, dy in pts:
+                px, py = ix + dx, iy + dy
+                if 0 <= px < self.W and 0 <= py < self.hor:
+                    tip = abs(dx) == size and size >= 2
+                    if sil:
+                        col = np.array((30, 22, 36.0))
+                    else:
+                        col = np.array((70, 72, 84.0) if tip or size == 1 else (228, 230, 236.0))
+                    a = vis * (0.55 + 0.15 * size)
+                    img[py, px] = img[py, px] * (1 - a) + col * a
 
     # ------------------------------------------------------------------ pieces
     def body_dir(self, sp):
@@ -602,30 +758,47 @@ class Mode:
         return np.array((math.cos(el) * math.sin(az), math.sin(el), math.cos(el) * math.cos(az)))
 
     def draw_moon(self, img, mx, my):
-        r = 2.6
-        c0, c1 = max(0, int(mx - 9)), min(self.W, int(mx + 10))
-        r0, r1 = max(0, int(my - 9)), min(self.hor, int(my + 10))
+        r = 3.6 if self.W >= 120 else 2.8
+        c0, c1 = max(0, int(mx - 14)), min(self.W, int(mx + 15))
+        r0, r1 = max(0, int(my - 14)), min(self.hor, int(my + 15))
         if c1 <= c0 or r1 <= r0:
             return
         dx = self.cols[None, c0:c1] - mx
         dy = self.rows[r0:r1, None] - my
         d2 = dx * dx + dy * dy
-        img[r0:r1, c0:c1] += (np.exp(-d2 / 30.0) * 0.25 * self.night)[..., None] * np.array((180, 190, 255.0))
-        disk = (d2 <= r * r) & ((dx + 1.3) ** 2 + (dy - 0.6) ** 2 > r * r * 0.8)
-        img[r0:r1, c0:c1][disk] = np.array((235, 235, 250.0))
+        img[r0:r1, c0:c1] += (np.exp(-d2 / 60.0) * 0.3 * self.night)[..., None] * np.array((170, 180, 255.0))
+        # waxing gibbous: soft terminator on the left, a few maria
+        disk = d2 <= r * r
+        lit = np.clip(((dx + 1.6 * r) ** 2 + dy ** 2 - (1.25 * r) ** 2) / (r * r * 1.2), 0.08, 1.0)
+        maria = (((dx - 0.9) ** 2 + (dy + 1.0) ** 2) < 1.4) | (((dx + 0.6) ** 2 + (dy - 1.2) ** 2) < 0.9) | \
+                (((dx - 1.4) ** 2 + (dy - 0.8) ** 2) < 0.6)
+        disk &= lit > 0.12
+        base = np.where(maria, 0.8, 1.0) * np.sqrt(lit)
+        moon = np.array((238, 238, 250.0))[None, None, :] * base[..., None]
+        sky = img[r0:r1, c0:c1]
+        sky[disk] = np.maximum(sky[disk], moon[disk])
 
     def draw_clouds(self, img, t):
         wx = DATA.weather or {}
-        n = len(self.clouds) if (wx.get("clouds") or wx.get("rain")) else 5
+        n = len(self.clouds) if (wx.get("clouds") or wx.get("rain") or self.golden > 0.3) else 6
         A = np.zeros((self.hor, self.W))
-        for c in self.clouds[:n]:
+        for c in self.clouds[:n] + self.cirrus:
             x, y, z = self.proj(np.array((c[0], c[1], c[2])))
             if z > 0:
-                self.blob(A, float(x), float(y), c[3] / z * self.f, c[4] / z * self.f, 0.55)
-        A = np.minimum(A, 0.8)[..., None]
+                self.blob(A, float(x), float(y), c[3] / z * self.f, c[4] / z * self.f, c[5] if len(c) > 5 else 0.55)
+        A = np.minimum(A, 0.8)
+        # underside rim: where there is more cloud just above, the sun lights the belly
+        up = np.zeros_like(A)
+        up[2:] = A[:-2]
+        rim = np.clip((up - A) * 3.0, 0, 1)[..., None]
+        A = A[..., None]
         lit = blend(blend((60, 50, 90), (255, 140, 160), self.golden), (240, 240, 248), self.day * (1 - self.golden * 0.7))
         lit = np.array(lit, float) * (0.35 + 0.65 * max(self.day, 0.15 + self.golden))
-        img[:self.hor] = img[:self.hor] * (1 - A) + lit * A
+        top = lit * (0.78 + 0.22 * self.day)
+        under = np.array(blend((255, 210, 200), (255, 120, 70), self.golden), float)
+        under = under * (0.25 + 0.75 * max(self.day, self.golden)) * (0.35 + 0.65 * self.golden)
+        cl = top + (under - top) * rim * (0.4 + 0.6 * self.golden)
+        img[:self.hor] = img[:self.hor] * (1 - A) + cl * A
 
     def draw_plane(self, img, now):
         if self.plane is None:
@@ -644,29 +817,28 @@ class Mode:
         if int(now * 2) % 2 and self.night > 0.1:
             self.dots(img, [x + 1], [y], np.array((255, 40, 40.0)))
 
-    def glitter(self, img, now):
-        """Sun / moon sparkle path on the water, refreshed a few times per second."""
-        if self.spark is None or now - self.spark_t > 0.15:
-            self.spark_t = now
-            nw = self.PH - self.hor
-            pts = []
-            for (bx, by, vis), strength, col in ((self.sun_px, self.day * 0.8 + self.golden * 0.6, (255, 220, 160)),
-                                                  (self.moon_px, self.night * 0.8, (200, 210, 255))):
-                if not vis or strength < 0.05:
-                    continue
-                n = int(strength * nw * 6)
-                ys = np.random.randint(0, nw, n)
-                width = 2 + ys * 0.35
-                xs = bx + np.random.normal(0, 1, n) * width
-                pts.append((xs, ys + self.hor, np.array(col, float) * min(1, strength)))
-            # wave crests elsewhere
-            n = int(self.W * 0.15)
-            ys = np.random.randint(0, nw, n)
-            xs = np.random.randint(0, self.W, n)
-            pts.append((xs, ys + self.hor, self.hcol * 0.5))
-            self.spark = pts
-        for xs, ys, col in self.spark:
-            self.dots(img, xs, ys, col, add=True)
+    def glitter(self, img, now, t):
+        """Sun / moon path: horizontally stretched glints riding the wave crests."""
+        hor, nw = self.hor, self.PH - self.hor
+        ri = np.arange(nw, dtype=np.float32)
+        X = self.cols[None, :].astype(np.float32)
+        for (bx, by, vis), strength, col in ((self.sun_px, self.day * 0.75 + self.golden * 0.7, (255, 214, 150)),
+                                              (self.moon_px, self.night * 0.85, (190, 205, 255))):
+            if not vis or strength < 0.05 or not -40 < bx < self.W + 40:
+                continue
+            width = (2.5 + ri * 0.55)[:, None]
+            c0, c1 = max(0, int(bx - 3 * width[-1, 0])), min(self.W, int(bx + 3 * width[-1, 0]) + 1)
+            if c1 <= c0:
+                continue
+            Xs = X[:, c0:c1]
+            path = np.exp(-((Xs - bx) / width) ** 2)
+            # fast, short, wide glints: high-frequency crest pattern on top of the wave slope
+            g = np.sin(Xs * (0.55 / (1 + ri * 0.05))[:, None] + (ri * 1.9)[:, None] + t * 4.3) \
+                * np.sin(Xs * 0.09 - (ri * 0.8)[:, None] - t * 2.1)
+            sl = self.w_slope[:, c0:c1]
+            glint = np.maximum(0, g - 0.25) * 1.6 + np.maximum(0, sl - 0.4) * 0.9
+            a = np.minimum(1.4, path * glint * min(1.0, strength))
+            img[hor:, c0:c1] += a[..., None] * np.array(col, np.float32)
 
     # far silhouettes ------------------------------------------------------
     def ridge(self, img, pts, col, mirror, base_y=None):
@@ -738,7 +910,7 @@ class Mode:
             b = self.night * (0.45 if mirror else 1.0)
             self.dots(img, xs[on], ys[on], self.win_col[on] * b * 0.85)
             # salesforce-ish crown light show
-            cx, cy, cz = self.proj(np.array((-116, 51.5, 299.0)), mirror)
+            cx, cy, cz = self.proj(np.array((-10, 71.5, 291.0)), mirror)
             hue = blend(PINK, CYAN, 0.5 + 0.5 * math.sin(self.phase * 90))
             self.dots(img, [float(cx) - 1, float(cx), float(cx) + 1], [float(cy)] * 3,
                       np.array(hue, float) * b)
@@ -781,17 +953,17 @@ class Mode:
         levels = np.arange(y0+.7,y1,.95 if y1 < 8 else 2.0)
         if not len(levels):
             return
-        a = np.array([(x0,y,z) for y in levels]); c = a.copy(); c[:,0]=x1
-        X,Y,Z=self.proj(a,mirror); U,V,Q=self.proj(c,mirror)
-        ok=(Z>1)&(Q>1)
-        self.lines(img,X[ok],Y[ok],U[ok],V[ok],col*.55)
+        a = [(x0,y,z) for y in levels]; c = [(x1,y,z) for y in levels]
+        n = len(a)
         if y1-y0 > 12:
             # Inner flange edges distinguish steel tower legs from stone piers.
-            a=np.array([(x0+.24,y0,z),(x1-.24,y0,z)])
-            c=a.copy();c[:,1]=y1
-            X,Y,Z=self.proj(a,mirror);U,V,Q=self.proj(c,mirror)
-            ok=(Z>1)&(Q>1)
-            self.lines(img,X[ok],Y[ok],U[ok],V[ok],col*1.18)
+            a += [(x0+.24,y0,z),(x1-.24,y0,z)]
+            c += [(x0+.24,y1,z),(x1-.24,y1,z)]
+        X,Y,Z=self.proj(np.array(a+c),mirror)
+        m = len(a)
+        ok=(Z[:m]>1)&(Z[m:]>1)
+        cols=np.empty((m,3)); cols[:n]=col*.55; cols[n:]=col*1.18
+        self.lines(img,X[:m][ok],Y[:m][ok],X[m:][ok],Y[m:][ok],cols[ok])
 
     def materials(self, mirror):
         L = 0.2 + 0.8 * self.day
@@ -832,7 +1004,8 @@ class Mode:
                     before = img.copy()
             b = self.boxes[i]
             self.box_faces(img, X[i], Y[i], b[:6], mats[b[6]], mirror)
-            self.steel_detail(img, b[:6], mats[b[6]], mirror)
+            if not mirror:  # the rippled reflection cannot show plate seams anyway
+                self.steel_detail(img, b[:6], mats[b[6]], mirror)
         self.draw_cable(img, -DW, mats["cable"], mirror)
         for k, bt in enumerate(self.boats):
             if bt[1] <= 0:
@@ -927,10 +1100,19 @@ class Mode:
             P = np.concatenate([np.stack([back, np.zeros(n), z + spread], 1), np.stack([back, np.zeros(n), z - spread], 1),
                                 np.stack([back, np.zeros(n), np.full(n, z)], 1)])
             X, Y, Z = self.proj(P)
-            ok = Z > 1
-            fade = np.tile(1 - k / (n + 1), 3)[ok]
-            col = (self.hcol * 0.35 + 25)[None, :] * fade[:, None]
-            self.dots(img, X[ok], Y[ok] + 0.5, col, add=True)
+            if (Z < 1).any():
+                continue
+            # V-shaped Kelvin wake: two foam arms plus a churned centre line, fading aft
+            col = (self.hcol * 0.3 + 34)
+            fade = (1 - k / (n + 1))
+            cols = col[None, :] * fade[:-1, None]
+            for arm in range(3):
+                sl = slice(arm * n, arm * n + n)
+                ax, ay = X[sl], Y[sl] + 0.5
+                self.lines(img, ax[:-1], ay[:-1], ax[1:], ay[1:], cols * (0.55 if arm == 2 else 1.0), add=True,
+                           ramp=lambda u: 0.6 + 0.4 * u)
+            hx, hy, _ = self.proj(np.array(((x + d * ln, 0, z), (x - d * ln, 0, z))))
+            self.lines(img, hx[1:], hy[1:] + 0.5, hx[:1], hy[:1] + 0.5, col * 0.5, add=True)
 
         # Tidal eddies wrap around the actual tower foundations, not the screen.
         angle=np.linspace(0,math.tau,19)
@@ -1029,6 +1211,8 @@ class Mode:
     # ------------------------------------------------------------------ output
     def blit(self, s, img):
         q = np.clip(img, 0, 255).astype(np.uint8) & 0xFC
+        # moving water: coarser colour steps keep the diff renderer from repainting every cell
+        q[self.hor:] &= 0xF8
         prev = self.prev
         self.prev = q
         if prev is None or prev.shape != q.shape:
@@ -1103,8 +1287,15 @@ class Mode:
         if now > self.next_msg:
             self.msg = (self.rng.choice(MSGS), now)
             self.next_msg = now + self.rng.uniform(10, 18)
+        self.draw_tracker(s, now)
+        if w >= 120:
+            self.heading_tape(s, now)
         sk = now - self.skull_t
-        if 0 <= sk < 5.0:
+        ds = now - self.ds_t
+        if 0 <= ds < 4.6 and not 0 <= sk < 5.0:
+            txt = " ctOS > BRIDGE LIGHTING: UNAUTHORISED PATTERN " if int(now * 3) % 2 else " ctOS > LIGHTING GRID // DEDSEC "
+            self.label(s, (w - len(txt)) // 2, 3, txt, PINK)
+        elif 0 <= sk < 5.0:
             txt = " SIGNAL HIJACKED // DEDSEC " if int(now * 4) % 2 else " ctOS CAM 04 // OVERRIDE "
             self.label(s, (w - len(txt)) // 2, 3, txt, PINK if int(now * 4) % 2 else YELLOW)
         elif now - self.msg[1] < 3.5:
@@ -1117,6 +1308,65 @@ class Mode:
                 y = self.rng.randrange(h)
                 if s.ch[y][x] == " ":
                     self.label(s, x, y, "/", (110, 120, 150))
+
+    def mark(self, s, x, y, ch, col):
+        """A HUD glyph that keeps the picture behind it as its cell background."""
+        if 0 <= x < self.w and 0 <= y < self.h:
+            a, b = s.pt[y][x], s.pb[y][x]
+            base = a or b or (0, 0, 0)
+            if a and b:
+                base = ((a[0] + b[0]) >> 1, (a[1] + b[1]) >> 1, (a[2] + b[2]) >> 1)
+            s.bg[y][x] = blend(base, BLACK, 0.18)
+            s.ch[y][x] = ch
+            s.fg[y][x] = col
+
+    def draw_tracker(self, s, now):
+        tb = getattr(self, "track_box", None)
+        if tb is None:
+            return
+        x0, y0, x1, y1, kind, sp = tb
+        age = now - self.track[1]
+        grow = max(0.0, 1 - age / 0.5) * 6
+        cx0, cx1 = int(x0 - 1 - grow), int(x1 + 1.999 + grow)
+        cy0, cy1 = int(y0 / 2 - 1 - grow / 2), int(y1 / 2 + 1.999 + grow / 2)
+        if cx1 - cx0 < 3:
+            cx1 = cx0 + 3
+        if cy1 - cy0 < 2:
+            cy1 = cy0 + 2
+        if cy0 < 3 or cy1 > self.h - 4 or cx0 < 1 or cx1 > self.w - 2:
+            return
+        locked = age > 0.5
+        col = blend(YELLOW if locked else WHITE, BLACK, 0.15 if int(now * 4) % 2 or locked else 0.5)
+        if age > 6.0:
+            col = blend(col, BLACK, (age - 6.0) / 0.5)
+        for x, y, ch in ((cx0, cy0, "┌"), (cx1, cy0, "┐"), (cx0, cy1, "└"), (cx1, cy1, "┘")):
+            self.mark(s, x, y, ch, col)
+        if locked and self.w >= 120:
+            name = {"sail": "SAILBOAT", "ferry": "FERRY", "ship": "CARGO"}[kind]
+            txt = " TRK-%02d %s %.1fKN " % (self.track[2], name, sp * 1.9)
+            n = min(len(txt), int((age - 0.5) * 40))
+            lx = cx0 if cx0 + len(txt) < self.w - 2 else cx1 - len(txt)
+            self.label(s, lx, cy0 - 1, txt[:n], blend(YELLOW, WHITE, 0.2))
+
+    def heading_tape(self, s, now):
+        hdg = math.degrees(self.yaw) % 360
+        names = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
+        width = 31
+        x0 = (self.w - width) // 2
+        dim = blend(CYAN, BLACK, 0.5)
+        for i in range(width):
+            deg = hdg + (i - width // 2) * 3
+            k = int(round(deg / 3)) * 3 % 360
+            if k % 15 == 0:
+                self.mark(s, x0 + i, 1, "·", dim)
+        for a, nm in names.items():
+            off = ((a - hdg + 180) % 360 - 180) / 3
+            if abs(off) < width // 2 - 1:
+                for j, ch in enumerate(nm):
+                    self.mark(s, x0 + width // 2 + int(round(off)) + j - (len(nm) > 1), 1, ch, CYAN)
+        num = "[%03d]" % int(hdg)
+        for i, ch in enumerate(num):
+            self.mark(s, x0 + width // 2 - 2 + i, 2, ch, YELLOW if ch in "[]" else blend(CYAN, WHITE, 0.3))
 
     def farewell(self, s, now, t):
         from cinematic import exit_scene

@@ -232,6 +232,7 @@ def raster_board(s, tl, tr, bl, bg, fg):
                 rc[x0 + i] = " "
 
 
+
 class BoxCity:
     """Procedural city like engine3d.City, rendered with numpy projection + slice fills."""
 
@@ -471,7 +472,7 @@ class FastFX:
             self.cache.clear()
         span = s.h + 16
         by = int((now * self.band_speed) % span) - 8
-        for k, t in ((0, 0.45), (-1, 0.25), (1, 0.25), (-2, 0.1)):
+        for k, t in ((0, 0.16), (-1, 0.08), (1, 0.08)):
             self.tint(s, by + k, WHITE, t)
         if glitch:
             for _ in range(random.randint(2, 5)):
@@ -483,6 +484,82 @@ class FastFX:
                     self.tint(s, y, col, 0.5)
             if random.random() < 0.3:
                 s.noise_lines(2)
+
+
+# ====================================================================== drone city dressing
+# PROFILER shares BoxCity, so the drone's materials, facades, roofs and signs
+# live in this subclass and in painter "extras" drawn straight after each block.
+
+MATERIALS = [(150, 140, 126), (72, 104, 138), (138, 82, 64), (78, 84, 98), (64, 118, 124), (172, 152, 118)]
+SIGNS = ["HOTEL", "BAR", "24H", "NUDLE", "TIDIS", "RAMEN", "CAFE", "OPEN", "BLUME", "SUSHI"]
+NEONS = [PINK, CYAN, YELLOW, (255, 90, 60), (160, 90, 255)]
+SODIUM = (255, 168, 70)
+
+
+def square_to_quad(p):
+    """3x3 homography mapping the unit square (0,0) (1,0) (1,1) (0,1) to quad p."""
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = p
+    sx, sy = x0 - x1 + x2 - x3, y0 - y1 + y2 - y3
+    if abs(sx) < 1e-9 and abs(sy) < 1e-9:
+        return np.array([[x1 - x0, x3 - x0, x0], [y1 - y0, y3 - y0, y0], [0, 0, 1.0]])
+    dx1, dx2, dy1, dy2 = x1 - x2, x3 - x2, y1 - y2, y3 - y2
+    den = dx1 * dy2 - dx2 * dy1
+    if abs(den) < 1e-9:
+        return None
+    g = (sx * dy2 - dx2 * sy) / den
+    h = (dx1 * sy - sx * dy1) / den
+    return np.array([[x1 - x0 + g * x1, x3 - x0 + h * x3, x0],
+                     [y1 - y0 + g * y1, y3 - y0 + h * y3, y0],
+                     [g, h, 1.0]])
+
+
+class DroneCity(BoxCity):
+    """BoxCity with real materials (no ▪ dot windows or dashed seams) plus per-block decor."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.decor = {}
+
+    def buildings(self, gx, gz):
+        key = (gx, gz)
+        if key not in self.cache:
+            r = random.Random(gx * 73856093 ^ gz * 19349663 ^ self.seed)
+            out = []
+            n = r.choice((1, 2, 2, 4))
+            sub = self.block / (2 if n > 1 else 1)
+            for i in range(n):
+                ox, oz = (i % 2) * sub, (i // 2) * sub
+                h = (r.uniform(3, 14) if r.random() < 0.85 else r.uniform(16, 30)) * self.hscale
+                x0 = gx * self.cell + ox + 0.4
+                z0 = gz * self.cell + oz + 0.4
+                mat = r.choice(MATERIALS)
+                b = (x0, z0, x0 + sub - 0.8, z0 + (sub if n == 4 else self.block) - 0.8, 0.0, round(h, 2), mat, False)
+                out.append(b)
+                self.decor[b] = {
+                    "seed": r.randrange(1 << 20),
+                    "fw": r.choice((1.6, 2.0, 2.4)),           # window module width
+                    "fh": r.choice((2.4, 2.8, 3.2)),           # floor height
+                    "roof": r.choice(("tank", "ac", "mast", "ac", None)),
+                    "sign": r.choice(SIGNS) if r.random() < 0.42 else None,
+                    "neon": r.choice(NEONS),
+                    "shop": r.random() < 0.7,
+                }
+            self.cache[key] = out
+            if len(self.cache) > 3000:
+                self.cache.clear()
+                self.decor.clear()
+        return self.cache[key]
+
+
+def material_faces(th):
+    """(front, side, top) per material for the current light."""
+    day = th["day"]
+    out = {}
+    for m in MATERIALS:
+        base = blend(blend(m, BLACK, 0.62 - 0.5 * day), th["sky_hor"], 0.10)
+        front = blend(base, th.get("sun", WHITE), 0.10 * day)
+        out[m] = (front, blend(front, BLACK, 0.38), blend(front, WHITE, 0.10 + 0.12 * day))
+    return out
 
 
 # ====================================================================== time of day
@@ -528,7 +605,9 @@ class Mode:
     def __init__(self, w, h):
         self.w, self.h = w, h
         self.cam = Camera(w, h, fov=0.85)
-        self.city = BoxCity()
+        self.city = DroneCity()
+        self.facade_x = (np.arange(w) + 0.5)[None, :]
+        self.facade_y = (np.arange(h * 2) + 0.5)[:, None]
         self.stars = Starfield(w, h, n=70, colors=(PURPLE, CYAN, WHITE))
         self.stars.cam = self.cam
         self.glitch = Glitch(0.01)
@@ -560,6 +639,9 @@ class Mode:
         self.next_piece = self.last + random.uniform(6, 12)
         self.next_police = self.last + random.uniform(14, 26)
         self.refl_cache = {}
+        self.flash = None
+        self.zoom_hit = False
+        self.zoom_z0 = 0.0
 
     # ------------------------------------------------------------ environment
     def update_theme(self, now):
@@ -574,6 +656,7 @@ class Mode:
                 self.theme["ground"] = blend(self.theme["ground"], BLACK, 0.4)
             self.fog_dist = 55.0 if wx and wx.get("fog") else 80.0
             self.refl_cache = {}
+            self.mat_faces = material_faces(self.theme)
 
     def sky(self, s, now):
         th, cam = self.theme, self.cam
@@ -611,7 +694,7 @@ class Mode:
             q = min(7, (y - hy) * 8 // max(1, h - hy))
             dx = int(math.sin(y * 1.7 + now * 5) * 1.5)
             for x in range(w):
-                if rbg[x] is not g or rc[x] != " " or rt[x] is not None or rb[x] is not None:
+                if (rbg[x] is not g and rbg[x] != self.road_color) or rc[x] != " " or rt[x] is not None or rb[x] is not None:
                     continue
                 xs = x + dx
                 if not 0 <= xs < w:
@@ -619,10 +702,11 @@ class Mode:
                 src = src_f[xs] if src_c[xs] != " " else src_b[xs]
                 if src is None:
                     continue
-                key = (src, q)
+                base = self.road_color if rbg[x] == self.road_color else gnd
+                key = (src, q, base)
                 c = cache.get(key)
                 if c is None:
-                    c = cache[key] = blend(src, gnd, 0.45 + q * 0.07)
+                    c = cache[key] = blend(src, base, 0.45 + q * 0.07)
                 rbg[x] = c
 
     def rain_fx(self, s, dt):
@@ -715,6 +799,32 @@ class Mode:
         return boxes, (dz * dz, cables)
 
     TUN_HW, TUN_TOP = 2.0, 7.5
+    TUN_RING = 3.0
+    VOID = (12, 11, 17)
+
+    def fill_world(self, s, pts, col):
+        """Near-clipped convex world polygon filled into the cell/bg layer."""
+        cam = self.cam
+        vs = [cam.to_view(p) for p in pts]
+        if min(v[2] for v in vs) < NEAR:
+            vs = clip_poly_near(vs)
+            if len(vs) < 3:
+                return False
+        f2, f1, cx, cy = cam.f * 2, cam.f, cam.cx, cam.cy
+        fill_conv(s, [(cx + v[0] / v[2] * f2, cy - v[1] / v[2] * f1) for v in vs], col)
+        return True
+
+    def arch(self, grow=0.0):
+        """Tunnel cross-section (x, y): straight walls and a semicircular vault."""
+        hw = self.TUN_HW + grow
+        lx = self.lane
+        spring = self.TUN_TOP - self.TUN_HW
+        pts = [(lx - hw, 0.0), (lx - hw, spring)]
+        for i in range(1, 6):
+            a = math.pi - math.pi * i / 6
+            pts.append((lx + hw * math.cos(a), spring + hw * math.sin(a)))
+        pts += [(lx + hw, spring), (lx + hw, 0.0)]
+        return pts
 
     def tunnel_parts(self, now, th):
         """Concrete tube filling the street; returns (inside, boxes, extras)."""
@@ -724,63 +834,94 @@ class Mode:
             return True, [], []
         if cz > z1:
             return False, [], []
-        wall = blend(th["front"], (90, 90, 110), 0.25)
-        self.city_faces[TUNNEL] = (wall, blend(wall, BLACK, 0.3), blend(wall, WHITE, 0.1))
+        wall = blend(blend(th["front"], (150, 150, 160), 0.35), BLACK, 0.1)
+        self.city_faces[TUNNEL] = (wall, blend(wall, BLACK, 0.35), blend(wall, WHITE, 0.12))
         box = (7.6, z0, 12.4, z1, 0.0, 10.5, TUNNEL, False)
         dz = z0 - cz
         return False, [box], [(dz * dz * 0.98, lambda s: self.tunnel_view(s, now, False))]
 
     def tunnel_view(self, s, now, inside):
+        """Clean tube: alternating concrete segments, ribs, sodium lamps rushing past."""
         z0, z1 = self.tunnel
         cam = self.cam
         cz = cam.pos[2]
-        hw, top, lx = self.TUN_HW, self.TUN_TOP, self.lane
-        fog = self.fog_dist
         th = self.theme
-        wall = blend(th["front"], BLACK, 0.3)
+        lx = self.lane
+        arch = self.arch()
+        ring = self.TUN_RING
+        view = 42.0
         if inside:
             blank = [" "] * self.w
             for y in range(self.h):
                 s.ch[y] = blank[:]
-                s.bg[y] = [wall] * self.w
+                s.bg[y] = [self.VOID] * self.w
                 s.pt[y] = [None] * self.w
                 s.pb[y] = [None] * self.w
-            # light at the end of the tunnel
-            ze = z1
-            if ze - cz < fog * 1.5:
-                q = [cam.project(p) for p in ((lx - hw, 0, ze), (lx + hw, 0, ze), (lx + hw, top, ze), (lx - hw, top, ze))]
-                if all(q):
-                    fill_conv(s, [(p[0], p[1]) for p in q], blend(th["fog"], WHITE, 0.35))
+            if z1 - cz < view + 10:
+                # Daylight at the far portal.
+                glow = blend(th["fog"], WHITE, 0.45)
+                self.fill_world(s, [(x, y, z1) for x, y in arch], glow)
+            k_far = min(int((z1 - z0) / ring), int((cz + view - z0) / ring) + 1)
+            k_near = max(0, int((cz - z0) / ring))
+            concrete = (92, 90, 98)
+            for k in range(k_far - 1, k_near - 1, -1):
+                za, zb = z0 + k * ring, z0 + (k + 1) * ring
+                if zb <= cz + NEAR:
+                    continue
+                za = max(za, cz + NEAR * 1.5)
+                d = (za + zb) / 2 - cz
+                fade = min(0.92, d / view)
+                lamp = k % 2 == 0
+                base = blend(concrete, BLACK, 0.18 if k % 2 else 0.0)
+                for i in range(len(arch) - 1):
+                    (xa, ya), (xb, yb) = arch[i], arch[i + 1]
+                    vault = 0 < i < len(arch) - 2
+                    c = blend(base, BLACK, 0.25) if vault else base
+                    if lamp and i in (0, len(arch) - 2):
+                        c = blend(c, SODIUM, 0.22)
+                    self.fill_world(s, [(xa, ya, za), (xb, yb, za), (xb, yb, zb), (xa, ya, zb)],
+                                    blend(c, self.VOID, fade))
+                road = (34, 34, 40) if k % 2 else (40, 40, 46)
+                self.fill_world(s, [(lx - 2.0, 0, za), (lx + 2.0, 0, za), (lx + 2.0, 0, zb), (lx - 2.0, 0, zb)],
+                                blend(road, self.VOID, fade))
+                if k % 2 == 0:
+                    self.fill_world(s, [(lx - .08, .01, za + .3), (lx + .08, .01, za + .3), (lx + .08, .01, za + 1.6),
+                                        (lx - .08, .01, za + 1.6)], blend((200, 170, 60), self.VOID, fade))
+                # Concrete rib at the segment start.
+                if k % 4 == 0 and za > cz + 0.6:
+                    rib = blend((150, 146, 150), self.VOID, fade)
+                    for i in range(len(arch) - 1):
+                        (xa, ya), (xb, yb) = arch[i], arch[i + 1]
+                        self.fill_world(s, [(xa, ya, za), (xb, yb, za), (xb, yb, za + .35), (xa, ya, za + .35)], rib)
+                if lamp:
+                    spring = self.TUN_TOP - self.TUN_HW
+                    lc = blend(blend(SODIUM, WHITE, 0.35), self.VOID, fade * 0.6)
+                    for sx in (lx - 1.97, lx + 1.97):
+                        self.fill_world(s, [(sx, spring - .55, za + .6), (sx, spring - .2, za + .6),
+                                            (sx, spring - .2, za + 2.0), (sx, spring - .55, za + 2.0)], lc)
         else:
-            q = [cam.project(p) for p in ((lx - hw, 0, z0), (lx + hw, 0, z0), (lx + hw, top, z0), (lx - hw, top, z0))]
-            if all(q):
-                fill_conv(s, [(p[0], p[1]) for p in q], wall)
-        k0 = max(0, int((cz - z0) / 4) + 1)
-        nk = int((z1 - z0) / 4)
-        kmax = min(nk, k0 + int(fog / 4))
-        tick = int(now * 8)
-        for k in range(kmax, k0 - 1, -1):
-            z = z0 + k * 4
-            if z - cz < 0.3:
-                continue
-            col = (PINK, CYAN, PURPLE)[k % 3] if 0 < k < nk else YELLOW
-            c = ((lx - hw, 0, z), (lx + hw, 0, z), (lx + hw, top, z), (lx - hw, top, z))
-            for i in range(4):
-                cam.line(s, c[i], c[(i + 1) % 4], col, fog=fog)
-            if (tick + k) % 4 == 0:
-                cam.point(s, (lx, top - 0.3, z), "●", WHITE, fog=fog)
-        zs, ze = max(z0, cz + 0.4), min(z1, cz + fog)
-        if ze > zs:
-            for x, y in ((lx - hw, 0), (lx + hw, 0), (lx - hw, top), (lx + hw, top)):
-                cam.line(s, (x, y, zs), (x, y, ze), DIM_CYAN, fog=fog)
-            for x in (lx - hw + 0.1, lx + hw - 0.1):  # strip lights rushing past
-                zz = math.floor(zs / 2) * 2 + 2
-                while zz < min(ze, zs + 30):
-                    cam.line(s, (x, top * 0.55, zz), (x, top * 0.55, zz + 0.8), YELLOW, fog=30)
-                    zz += 2
-        if not inside and all(q):
-            for i in range(4):
-                seg(s, q[i][0], q[i][1], q[i - 1][0], q[i - 1][1], "█" if i % 2 else "▀", YELLOW)
+            frame = (150, 146, 150) if th["day"] > 0.3 else (90, 88, 96)
+            if not self.fill_world(s, [(x, y, z0 - 0.05) for x, y in self.arch(0.45)], frame):
+                return
+            self.fill_world(s, [(x, y, z0 - 0.06) for x, y in arch], self.VOID)
+            # Lamps inside the bore, receding into the dark.
+            for k in range(0, 14, 2):
+                zz = z0 + k * ring + 1.3
+                for sx in (lx - 1.9, lx + 1.9):
+                    q = cam.project((sx, self.TUN_TOP - self.TUN_HW - .4, zz))
+                    if q:
+                        col = blend(SODIUM, self.VOID, min(0.85, k / 16))
+                        s.pixel(int(q[0]), int(q[1] * 2), col)
+            q = cam.project((lx, self.TUN_TOP + 0.9, z0 - 0.1))
+            q2 = cam.project((lx + self.TUN_HW, self.TUN_TOP + 0.9, z0 - 0.1))
+            if q and q2:
+                label = "BROADWAY TUNNEL" if (q2[0] - q[0]) * 2 > 19 else "TUNNEL"
+                if (q2[0] - q[0]) * 2 > len(label) + 2:
+                    x = int(q[0]) - len(label) // 2
+                    y = int(q[1])
+                    for k in range(len(label) + 2):
+                        s.set_bg(x - 1 + k, y, (20, 70, 45))
+                    s.text(x, y, label, WHITE)
 
     def police_pos(self, now):
         t = now - self.police
@@ -789,12 +930,12 @@ class Mode:
             rel = (math.sin(t * 2) * 1.0, -1.5, -8 + t)
         elif t < 5.5:
             u = (t - 3) / 2.5
-            rel = (math.sin(t * 2) * 1.2, -1.5 + u * 3.2, -5 + u * u * 27)
+            rel = (math.sin(t * 2) * 1.2, -1.5 + u * 3.2, -5 + u * u * 23)
         elif t < 11:
-            rel = (math.sin(t * 1.3) * 2.4, 1.7 + math.sin(t * 2.1) * 0.8, 22 + math.sin(t * 0.7) * 3)
+            rel = (math.sin(t * 1.3) * 2.0, 1.4 + math.sin(t * 2.1) * 0.6, 14 + math.sin(t * 0.7) * 2.5)
         else:
             u = (t - 11) / 2
-            rel = (math.sin(t * 1.3) * 2.4, 1.7 + u * u * 18, 22 + u * 25)
+            rel = (math.sin(t * 1.3) * 2.0, 1.4 + u * u * 18, 14 + u * 25)
         return t, (cam.pos[0] + rel[0], cam.pos[1] + rel[1], cam.pos[2] + rel[2]), rel[2]
 
     def police_draw(self, now):
@@ -802,26 +943,57 @@ class Mode:
         cam = self.cam
 
         def draw(s):
-            fog = 90
+            q = cam.project(p)
+            if not q or q[2] < 0.8:
+                return
+            cx, cy, z = q[0], q[1] * 2, q[2]
+            k = cam.f * 2 / z                       # pixels per world unit
             red_on = int(now * 8) % 2 == 0
-            x, y, z = p
+            # Light halo, painted under the airframe.
+            r = max(3.0, k * 1.5)
+            for py in range(max(0, int(cy - r)), min(s.ph, int(cy + r) + 1)):
+                dy = (py - cy) / r
+                layer = (s.pb if py & 1 else s.pt)[py >> 1]
+                brow = s.bg[py >> 1]
+                for x in range(max(0, int(cx - r * 1.6)), min(s.w, int(cx + r * 1.6) + 1)):
+                    dx = (x - cx) / (r * 1.6)
+                    d2 = dx * dx + dy * dy
+                    if d2 < 1:
+                        col = RED if (dx < 0) == red_on else BLUE
+                        base = layer[x] or brow[x] or BLACK
+                        layer[x] = blend(base, col, 0.45 * (1 - d2))
+            # Arms and rotors.
+            body = (28, 32, 52)
             for dx, dz in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-                cam.line(s, (x, y, z), (x + dx * 1.1, y + 0.15, z + dz * 1.1), GREY, fog=fog)
-                spin = "─" if int(now * 20 + dx) % 2 else "│"
-                cam.point(s, (x + dx * 1.1, y + 0.25, z + dz * 1.1), "═" if spin == "─" else "╪", WHITE, fog=fog)
-            cam.point(s, (x, y, z), "█", (30, 30, 50), fog=fog)
-            cam.point(s, (x - 0.35, y + 0.35, z), "●", RED if red_on else blend(RED, BLACK, 0.7), fog=fog)
-            cam.point(s, (x + 0.35, y + 0.35, z), "●", blend(BLUE, BLACK, 0.7) if red_on else BLUE, fog=fog)
+                rq = cam.project((p[0] + dx * 1.1, p[1] + 0.1, p[2] + dz * 1.1))
+                if not rq:
+                    continue
+                rx, ry = rq[0], rq[1] * 2
+                s.pixel_line(cx, cy, rx, ry, (70, 76, 96))
+                rr = max(1.0, k * 0.55)
+                blur = (150, 160, 180) if int(now * 30 + dx) % 2 else (110, 118, 140)
+                for i in range(int(-rr), int(rr) + 1):
+                    s.pixel(int(rx + i), int(ry - 1), blur)
+                s.pixel(int(rx), int(ry), (40, 44, 60))
+            bw, bh = max(2, int(k * 0.9)), max(1, int(k * 0.45))
+            s.pixel_rect(cx - bw / 2, cy - bh / 2, bw, bh, body)
+            s.pixel_rect(cx - bw / 2, cy - bh / 2, bw, max(1, bh // 3), (215, 220, 235))
+            s.pixel(int(cx), int(cy + bh / 2), (255, 255, 255) if int(now * 3) % 2 else (90, 200, 255))
+            # Light bar.
+            lw = max(1, bw // 2)
+            s.pixel_rect(cx - lw, cy - bh / 2 - 1, lw, 1, RED if red_on else blend(RED, BLACK, 0.7))
+            s.pixel_rect(cx, cy - bh / 2 - 1, lw, 1, blend(BLUE, BLACK, 0.7) if red_on else BLUE)
             if 5.5 < t < 11:
-                # sweeping searchlight onto the street ahead
-                gx = x + math.sin(now * 1.7) * 3
-                for k in range(3):
-                    cam.line(s, (x, y - 0.3, z), (gx + k - 1, 0, z - 6), blend(WHITE, BLACK, 0.55), fog=fog, char="·")
-                q = cam.project((x, y, z))
-                if q and 0 <= q[0] < s.w:
-                    s.text(int(q[0]) + 3, int(q[1]) - 1, "SFPD-%02d" % (int(self.police) % 97), RED if red_on else BLUE)
-        dz = rz
-        return t, (dz * dz, draw)
+                gx = p[0] + math.sin(now * 1.7) * 2.5
+                for kk in (-0.6, 0, 0.6):
+                    cam.line(s, (p[0], p[1] - 0.3, p[2]), (gx + kk, 0, p[2] - 5), blend(WHITE, BLACK, 0.6), fog=90, char="·")
+            # Target box with tag.
+            half = max(3, int(k * 1.3))
+            x0, y0 = int(cx) - half, int(cy / 2) - max(2, half // 3)
+            col = RED if red_on else BLUE
+            s.brackets(x0, y0, half * 2 + 1, max(3, half * 2 // 3) + 1, col, arm=1)
+            s.text(x0, y0 - 1, "SFPD UAV-%02d" % (int(self.police) % 97), col)
+        return t, (rz * rz, draw)
 
     def billboard(self, s, now):
         """A giant DedSec skull billboard over the street, rasterised in half-block pixels."""
@@ -831,15 +1003,212 @@ class Mode:
         cam = self.cam
         col = blend(PINK, PURPLE, pulse(now, 3))
         corners = [(cx - w2, cy - h2, z), (cx + w2, cy - h2, z), (cx + w2, cy + h2, z), (cx - w2, cy + h2, z)]
-        cam.line(s, (cx - w2 * 0.6, 0, z), (cx - w2 * 0.6, cy - h2, z), GREY, fog=150)
-        cam.line(s, (cx + w2 * 0.6, 0, z), (cx + w2 * 0.6, cy - h2, z), GREY, fog=150)
+        for lx in (cx - w2 * 0.6, cx + w2 * 0.6):
+            self.fill_world(s, [(lx - .3, 0, z + .2), (lx + .3, 0, z + .2), (lx + .3, cy - h2, z + .2), (lx - .3, cy - h2, z + .2)],
+                            blend((60, 62, 74), self.theme["fog"], min(0.8, (z - cam.pos[2]) / 150)))
         pts = [cam.project(c) for c in corners]
         if all(pts):
             fog = min(0.85, pts[0][2] / 150)
-            raster_board(s, pts[3], pts[2], pts[0], blend(blend(col, BLACK, 0.8), BLACK, fog),
-                         blend(blend(WHITE, PINK, 0.25 + 0.2 * pulse(now, 7)), BLACK, fog))
+            # Frame first, then the skull panel inset.
+            fr = [cam.project((cx + dx * (w2 + .7), cy + dy * (h2 + .7), z + .05)) for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+            if all(fr):
+                fill_conv(s, [(p[0], p[1]) for p in fr], blend((30, 20, 40), BLACK, fog))
+            raster_board(s, pts[3], pts[2], pts[0], blend(blend(col, BLACK, 0.55), BLACK, fog),
+                         blend(blend(WHITE, PINK, 0.15 + 0.2 * pulse(now, 7)), BLACK, fog))
+            width = pts[1][0] - pts[0][0]
+            if width > 34:
+                label = "D E D S E C" if width > 60 else "DEDSEC"
+                bq = cam.project((cx, cy - h2 - .25, z))
+                if bq and 0 < bq[1] < s.h - 1:
+                    x = int(bq[0]) - len(label) // 2
+                    y = int(bq[1])
+                    for k in range(-2, len(label) + 2):
+                        s.set_bg(x + k, y, (30, 20, 40))
+                    s.text(x, y, label, PINK if int(now * 4) % 2 else WHITE)
         for i in range(4):
             cam.line(s, corners[i], corners[(i + 1) % 4], col, fog=150)
+
+    def decorate(self, s, b, now):
+        """Facade windows (projective, pixel resolution), roof kit and neon signs for one block."""
+        dec = self.city.decor.get(b)
+        if dec is None:
+            return
+        cam = self.cam
+        th = self.theme
+        px, py_, pz = cam.pos
+        x0, z0, x1, z1, _, y1 = b[:6]
+        fog = self.fog_dist
+        f2, f1, ccx, ccy = cam.f * 2, cam.f, cam.cx, cam.cy
+        day = th["day"]
+        faces = []
+        if pz < z0:
+            faces.append(((x0, z0), (x1, z0)))
+        if px < x0:
+            faces.append(((x0, z1), (x0, z0)))
+        elif px > x1:
+            faces.append(((x1, z0), (x1, z1)))
+        lit_p = th.get("lit", 0.3)
+        seed = dec["seed"]
+        for (ax, az), (bx, bz) in faces:
+            va = cam.to_view((ax, 0, az)); vb = cam.to_view((bx, 0, bz))
+            vat = cam.to_view((ax, y1, az)); vbt = cam.to_view((bx, y1, bz))
+            # Clip the face along u to the part safely in front of the camera.
+            lim = 0.6
+            u0, u1 = 0.0, 1.0
+            for za, zb in ((va[2], vb[2]), (vat[2], vbt[2])):
+                if za < lim and zb < lim:
+                    u0, u1 = 1.0, 0.0
+                    break
+                if za < lim:
+                    u0 = max(u0, (lim - za) / (zb - za))
+                elif zb < lim:
+                    u1 = min(u1, (lim - za) / (zb - za))
+            if u1 - u0 < 0.02:
+                continue
+            P = []
+            for u, yy in ((u0, 0), (u1, 0), (u1, y1), (u0, y1)):
+                v = cam.to_view((ax + (bx - ax) * u, yy, az + (bz - az) * u))
+                P.append((ccx + v[0] / v[2] * f2, (ccy - v[1] / v[2] * f1) * 2))
+            xs = [p[0] for p in P]
+            ys = [p[1] for p in P]
+            xa, xb = max(0, int(min(xs))), min(s.w - 1, int(max(xs)))
+            ya, yb = max(0, int(min(ys))), min(s.ph - 1, int(max(ys)))
+            if xb - xa < 3 or yb - ya < 4:
+                continue
+            L = math.hypot(bx - ax, bz - az)
+            floors = y1 / dec["fh"]
+            # Floor height in pixels at the nearer edge; skip when windows would alias.
+            if max(abs(P[3][1] - P[0][1]), abs(P[2][1] - P[1][1])) / max(1, floors) < 2.6:
+                continue
+            H = square_to_quad(P)
+            if H is None:
+                continue
+            # Projective coordinates cancel a common scale, so the adjugate
+            # gives the inverse mapping without a general matrix solve.
+            a, b_, c = H[0]
+            d, e, f = H[1]
+            g, h, i = H[2]
+            A, B, C = e * i - f * h, c * h - b_ * i, b_ * f - c * e
+            D, E, F = f * g - d * i, a * i - c * g, c * d - a * f
+            G, J, K = d * h - e * g, b_ * g - a * h, a * e - b_ * d
+            if abs(a * A + b_ * D + c * G) < 1e-9:
+                continue
+            Hi = np.array(((A, B, C), (D, E, F), (G, J, K)))
+            # Broadcast coordinate axes instead of allocating two full pixel grids.
+            X = self.facade_x[:, xa:xb + 1]
+            Y = self.facade_y[ya:yb + 1]
+            den = Hi[2, 0] * X + Hi[2, 1] * Y + Hi[2, 2]
+            u = (Hi[0, 0] * X + Hi[0, 1] * Y + Hi[0, 2]) / den
+            v = (Hi[1, 0] * X + Hi[1, 1] * Y + Hi[1, 2]) / den
+            inside = (u >= 0) & (u < 1) & (v >= 0) & (v < 1)
+            wu = (u0 + u * (u1 - u0)) * L / dec["fw"]
+            wv = v * floors                       # v runs from the bottom edge (P0) up
+            iu, iv = wu.astype(int), wv.astype(int)
+            # Inside the facade, both coordinates are nonnegative, so their
+            # integer casts are floors. Outside pixels are gated by `inside`.
+            fu, fv = wu - iu, wv - iv
+            upper = inside & (wv >= 1) & (wv < floors - 0.25) & (fu > .2) & (fu < .8) & (fv > .3) & (fv < .78)
+            shop = inside & (wv < 1) & (fv > .12) & (fv < .72) & ((fu < .9) | (fu > .95)) if dec["shop"] else None
+            h = (iu * 7919 + iv * 104729 + seed) % 997
+            lit = upper & (h < lit_p * 997)
+            dark = upper & ~lit
+            d = (va[2] + vb[2]) / 2
+            fk = min(0.9, d / fog)
+            fc = th["fog"]
+            glass = blend(blend(th["sky_hor"], (30, 40, 60), 0.45 if day > .5 else 0.8), fc, fk)
+            # Keep reflected panes subordinate to the surrounding building mass.
+            glass = blend(glass, self.mat_faces[b[6]][1], 0.25)
+            glass2 = blend(glass, WHITE, 0.06)
+            warm = blend((255, 205, 120) if day < .5 else (250, 235, 200), fc, fk * 0.8)
+            cool = blend((150, 210, 255), fc, fk * 0.8)
+            shopc = blend((255, 190, 110) if day < .5 else (90, 140, 150), fc, fk)
+            pt, pb = s.pt, s.pb
+            for mask, col in ((dark, None), (lit, warm), (shop, shopc)):
+                if mask is None:
+                    continue
+                yy, xx = np.nonzero(mask)
+                if not len(yy):
+                    continue
+                if col is None:
+                    alt = ((h[yy, xx] & 3) == 0).tolist()
+                    for j, i, a in zip((yy + ya).tolist(), (xx + xa).tolist(), alt):
+                        (pb if j & 1 else pt)[j >> 1][i] = glass2 if a else glass
+                elif col is warm:
+                    cl = ((h[yy, xx] % 5) == 0).tolist()
+                    for j, i, a in zip((yy + ya).tolist(), (xx + xa).tolist(), cl):
+                        (pb if j & 1 else pt)[j >> 1][i] = cool if a else warm
+                else:
+                    for j, i in zip((yy + ya).tolist(), (xx + xa).tolist()):
+                        (pb if j & 1 else pt)[j >> 1][i] = col
+        cx_, cz_ = (x0 + x1) / 2 - px, (z0 + z1) / 2 - pz
+        d2 = cx_ * cx_ + cz_ * cz_
+        if d2 > 55 * 55:
+            return
+        fk = min(0.9, math.sqrt(d2) / fog)
+        fc = th["fog"]
+        roof = dec["roof"]
+        if roof == "tank":
+            tx, tz = x0 + 1.2, z0 + 1.2
+            wood = blend((120, 84, 58), fc, fk)
+            for lx in (tx - .5, tx + .5):
+                self.fill_world(s, [(lx - .06, y1, tz - .6), (lx + .06, y1, tz - .6), (lx + .06, y1 + .8, tz - .6), (lx - .06, y1 + .8, tz - .6)], blend((60, 60, 66), fc, fk))
+            self.fill_world(s, [(tx - .7, y1 + .8, tz - .7), (tx + .7, y1 + .8, tz - .7), (tx + .7, y1 + 2.2, tz - .7), (tx - .7, y1 + 2.2, tz - .7)], wood)
+            self.fill_world(s, [(tx - .7, y1 + 2.2, tz - .7), (tx + .7, y1 + 2.2, tz - .7), (tx, y1 + 2.8, tz)], blend(wood, BLACK, .3))
+        elif roof == "ac":
+            ax_, az_ = x1 - 1.6, z0 + 1.0
+            grey = blend((150, 152, 158), fc, fk)
+            self.fill_world(s, [(ax_ - .8, y1, az_ - .5), (ax_ + .8, y1, az_ - .5), (ax_ + .8, y1 + .7, az_ - .5), (ax_ - .8, y1 + .7, az_ - .5)], grey)
+            self.fill_world(s, [(ax_ - .8, y1 + .7, az_ - .5), (ax_ + .8, y1 + .7, az_ - .5), (ax_ + .8, y1 + .7, az_ + .5), (ax_ - .8, y1 + .7, az_ + .5)], blend(grey, WHITE, .2))
+            q = cam.project((ax_, y1 + .45, az_ - .5))
+            if q and q[2] < 30 and 0 <= q[0] < s.w and 0 <= q[1] < s.h:
+                s.put(int(q[0]), int(q[1]), "@" if int(now * 6) % 2 else "*", blend((60, 60, 70), fc, fk))
+        elif roof == "mast":
+            mx, mz = (x0 + x1) / 2, (z0 + z1) / 2
+            a = cam.project((mx, y1, mz))
+            t = cam.project((mx, y1 + 4.5, mz))
+            if a and t:
+                seg(s, a[0], a[1], t[0], t[1], "│", blend((120, 124, 134), fc, fk))
+                if int(now * 1.5 + seed) % 2 and 0 <= t[0] < s.w and 0 <= t[1] < s.h:
+                    s.put(int(t[0]), int(t[1]), "●", RED)
+        sign = dec["sign"]
+        if sign and pz < z0:
+            neon = dec["neon"]
+            on = not (int(now * 7 + seed) % 23 == 0)       # occasional flicker
+            if y1 < 11:
+                # Rooftop board facing the street.
+                mx = (x0 + x1) / 2
+                bl = cam.project((mx - 2.2, y1 + .4, z0 + .3))
+                br = cam.project((mx + 2.2, y1 + 1.9, z0 + .3))
+                if bl and br:
+                    self.fill_world(s, [(mx - 2.2, y1 + .4, z0 + .3), (mx + 2.2, y1 + .4, z0 + .3), (mx + 2.2, y1 + 1.9, z0 + .3), (mx - 2.2, y1 + 1.9, z0 + .3)],
+                                    blend(blend(neon, BLACK, .78), fc, fk))
+                    wcell = br[0] - bl[0]
+                    y = int((bl[1] + br[1]) / 2)
+                    if wcell > len(sign) + 1 and 0 <= y < s.h:
+                        x = int((bl[0] + br[0]) / 2) - len(sign) // 2
+                        s.text(x, y, sign, blend(neon if on else blend(neon, BLACK, .6), fc, fk * .7))
+                    elif wcell > 1 and 0 <= y < s.h:
+                        xa, xb = max(0, int(bl[0]) + 1), min(s.w, int(br[0]))
+                        if xb > xa:
+                            s.bg[y][xa:xb] = [blend(neon, fc, fk)] * (xb - xa)
+            else:
+                # Vertical blade on the corner nearest the street.
+                sx = x1 - .5 if self.lane > x1 else x0 + .5
+                top, bot = 3.0 + len(sign) * 1.0, 2.6
+                pts = [(sx - .35, bot, z0 - .2), (sx + .35, bot, z0 - .2), (sx + .35, top, z0 - .2), (sx - .35, top, z0 - .2)]
+                if self.fill_world(s, pts, blend(blend(neon, BLACK, .72), fc, fk)):
+                    qt, qb = cam.project((sx, top, z0 - .2)), cam.project((sx, bot, z0 - .2))
+                    if qt and qb:
+                        hcell = qb[1] - qt[1]
+                        col = blend(neon if on else blend(neon, BLACK, .6), fc, fk * .7)
+                        if hcell >= len(sign) + 1:
+                            step = hcell / len(sign)
+                            for i, ch in enumerate(sign):
+                                s.put(int(qt[0]), int(qt[1] + (i + .5) * step), ch, col)
+                        else:
+                            for y in range(max(0, int(qt[1]) + 1), min(s.h, int(qb[1]))):
+                                if 0 <= y < s.h and 0 <= int(qt[0]) < s.w:
+                                    s.bg[y][int(qt[0])] = col
 
     # ------------------------------------------------------------ HUD
     def hud(self, s, now, boost, police_t):
@@ -949,27 +1318,48 @@ class Mode:
         self.plan_pieces(now)
 
         boost = 0.0
-        if self.zoom_t is None and now > self.next_zoom and self.police is None:
+        cam = self.cam
+        z = cam.pos[2]
+        clear_ahead = not (self.tunnel and self.tunnel[0] - z < 160) and not self.bridge
+        if self.zoom_t is None and now > self.next_zoom and self.police is None and clear_ahead:
+            # Crash zoom: lock onto a DedSec billboard ahead and dive straight at it.
             self.zoom_t = now
-            self.glitch.trigger(now, 0.3)
-            self.callout = (random.choice(CALLOUTS), now)
+            self.zoom_z0 = z
+            self.board_z = z + 70
+            self.glitch.trigger(now, 0.15)
+            self.callout = ("BILLBOARD HACKED", now)
+        zoom_u = None
         if self.zoom_t is not None:
             zt = now - self.zoom_t
-            boost = math.sin(min(1, zt / 2.2) * math.pi)
-            if zt > 2.2:
+            boost = math.sin(min(1, zt / self.ZOOM_T) * math.pi * 0.5)
+            if zt < self.ZOOM_T:
+                zoom_u = zt / self.ZOOM_T
+            elif zt < self.ZOOM_T + 0.06 and not self.zoom_hit:
+                self.zoom_hit = True
+                self.flash = now
+                self.glitch.trigger(now, 0.35)
+                self.particles.burst(self.w / 2, self.h / 2, 90, colors=(PINK, WHITE, CYAN), speed=34)
+            if zt > self.ZOOM_T + 0.5:
                 self.zoom_t = None
-                self.next_zoom = now + random.uniform(9, 15)
-                self.particles.burst(self.w / 2, self.h / 2, 80, speed=30)
+                self.zoom_hit = False
+                self.board_z = cam.pos[2] + random.uniform(110, 150)
+                self.next_zoom = now + random.uniform(11, 17)
         police_t = None
         if self.police is not None:
             police_t = now - self.police
         chase = 0.0 if police_t is None else min(1.0, police_t / 1.5, max(0.0, (13 - police_t) / 1.5))
-        self.speed = 14 + boost * 60 + chase * 10
-        self.cam.f = self.h * (0.85 + boost * 0.9)
-
-        cam = self.cam
-        cam.pos[2] += self.speed * dt
-        self.dist += self.speed * dt
+        if zoom_u is not None:
+            # Ease-in dive that stops just short of the panel, then punches through.
+            target = self.board_z - 4.0
+            nz = self.zoom_z0 + (target - self.zoom_z0) * zoom_u ** 2.4
+            self.speed = max(14.0, (nz - cam.pos[2]) / max(dt, 1e-3)) if dt > 0 else self.speed
+            cam.pos[2] = nz
+            self.dist += max(0.0, self.speed * dt)
+        else:
+            self.speed = 14 + boost * 40 + chase * 10
+            cam.pos[2] += self.speed * dt
+            self.dist += self.speed * dt
+        self.cam.f = self.h * (0.85 + (0.25 * zoom_u if zoom_u is not None else 0.0))
         z = cam.pos[2]
         alt = 5.5 + math.sin(t * 0.37) * 3.5 + math.sin(t * 0.11) * 2
         if self.tunnel and self.tunnel[0] - 25 < z < self.tunnel[1] + 2:
@@ -986,6 +1376,16 @@ class Mode:
         cam.roll = -math.cos(t * 0.5) * 0.22 - chase * math.cos(t * 2.3) * 0.3 + \
             (random.uniform(-0.03, 0.03) if boost > 0.3 else 0)
         cam.pitch = -0.08 + math.sin(t * 0.37 + 1.5) * 0.12
+        if zoom_u is not None:
+            # Aim the airframe at the billboard: climb to its centre, level the horizon.
+            e = min(1.0, zoom_u * 2.2)
+            e = e * e * (3 - 2 * e)
+            cam.pos[1] = self.alt = self.alt + (12.0 - self.alt) * e
+            cam.pos[0] = cam.pos[0] + (self.lane - cam.pos[0]) * e
+            dz = max(4.0, self.board_z - z)
+            cam.yaw *= 1 - e
+            cam.roll = cam.roll * (1 - e) + random.uniform(-0.015, 0.015) * zoom_u
+            cam.pitch = cam.pitch * (1 - e) + math.atan2(12.0 - cam.pos[1], dz) * e
 
         self.sky(s, now)
         if th["day"] < 0.3:
@@ -994,8 +1394,14 @@ class Mode:
             blank = [" "] * self.w
             for y in range(hy, self.h):  # stars only in the sky
                 s.ch[y] = blank[:]
-        # street centre line
         fog = self.fog_dist
+        # Keep the street floor and curbs legible in rain as well as dry weather.
+        self.road_color = blend(th["ground"], (70, 72, 80), 0.25)
+        curb = blend(th["ground"], (150, 150, 158), 0.35 + 0.2 * th["day"])
+        self.fill_world(s, [(8.0, 0, z + .5), (12.0, 0, z + .5), (12.0, 0, z + fog), (8.0, 0, z + fog)], self.road_color)
+        for xa, xb in ((7.6, 8.1), (11.9, 12.4)):
+            self.fill_world(s, [(xa, .05, z + .5), (xb, .05, z + .5), (xb, .05, z + fog), (xa, .05, z + fog)], curb)
+        # street centre line
         z0 = math.floor(z / 6) * 6
         dash = blend(YELLOW, th["ground"], 0.5)
         for k in range(1, 12):
@@ -1004,13 +1410,9 @@ class Mode:
 
         # Road expansion seams, curb lines and drainage grates in world space.
         asphalt = blend(th["ground"], GREY, 0.19)
-        for k in range(1, 17):
+        for k in range(3, 17, 3):
             zz = z0 + k * 4
-            cam.line(s, (self.lane-1.8, .015, zz), (self.lane+1.8, .015, zz), asphalt, fog=fog, char=".")
-            if k % 3 == 0:
-                cam.line(s, (self.lane+1.4, .03, zz), (self.lane+1.8, .03, zz+.7), asphalt, fog=fog, char="=")
-        for side in (-1, 1):
-            cam.line(s, (self.lane+side*2, .025, z+1), (self.lane+side*2, .025, z+fog), asphalt, fog=fog, char="/")
+            cam.line(s, (self.lane+1.4, .03, zz), (self.lane+1.8, .03, zz+.7), asphalt, fog=fog, char="=")
 
         cell = self.city.cell
         gx0 = int(cam.pos[0] // cell)
@@ -1018,8 +1420,30 @@ class Mode:
         boxes = [b for gx in range(gx0, gx0 + 2) for gz in range(gz0 - 1, gz0 + int(fog // cell) + 2)
                  for b in self.city.buildings(gx, gz) if b[3] > z - 2 and not self.blocked(b)]
         extras = [(1e6, self.billboard_fn(now))]
+        px_, pz_ = cam.pos[0], cam.pos[2]
+        # Decoration is expensive: skip blocks whose facade and roof kit are
+        # completely outside the view. Keep near-plane straddlers conservatively.
+        visible_decor = boxes
+        if boxes:
+            # Decoration is limited to 70 world units, so distant blocks need
+            # no roof-expanded projection at all; the city still renders them.
+            decor_boxes = [b for b in boxes if ((b[0] + b[2]) / 2 - px_) ** 2 +
+                           ((b[1] + b[3]) / 2 - pz_) ** 2 < 70 * 70]
+            bounds = np.array([self.city.corners(b) for b in decor_boxes], dtype=float).reshape(-1, 8, 3)
+            bounds[:, 4:, 1] += 5.0
+            vx, vy, vz = view_np(cam, bounds)
+            zsafe = np.maximum(vz, NEAR)
+            sx = cam.cx + vx / zsafe * (cam.f * 2)
+            sy = cam.cy - vy / zsafe * cam.f
+            off = (vz.min(axis=1) >= NEAR) & ((sx.max(axis=1) < -3) | (sx.min(axis=1) >= self.w + 3) | (sy.max(axis=1) < -3) | (sy.min(axis=1) >= self.h + 3))
+            visible_decor = [decor_boxes[i] for i in np.nonzero((vz.max(axis=1) >= NEAR) & ~off)[0]]
+        for b in visible_decor:
+            cx_, cz_ = (b[0] + b[2]) / 2 - px_, (b[1] + b[3]) / 2 - pz_
+            d2 = cx_ * cx_ + cz_ * cz_
+            if d2 < 70 * 70:
+                extras.append((d2 - 1e-3, lambda s, b=b: self.decorate(s, b, now)))
         theme = dict(th)
-        self.city_faces = {}
+        self.city_faces = dict(self.mat_faces)
         theme["box_faces"] = self.city_faces
         inside = False
         if self.bridge is not None:
@@ -1038,7 +1462,7 @@ class Mode:
         if police_t is not None:
             police_t, pe = self.police_draw(now)
             extras.append(pe)
-        self.city.draw(s, cam, boxes, fog=fog, theme=theme, extras=extras, tick=now * 2)
+        self.city.draw(s, cam, boxes, fog=fog, theme=theme, extras=extras, tick=now * 2, win_dist=0.0)
         if self.rain:
             self.reflections(s, now)
             self.rain_fx(s, dt)
@@ -1052,10 +1476,41 @@ class Mode:
                 s.line(int(x0), int(y0), int(x1), int(y1), "·", blend(WHITE, BLACK, 0.4))
         if police_t is not None:
             self.siren(s, now, police_t)
-        self.hud(s, now, boost > 0.2, police_t)
+        if zoom_u is not None and zoom_u > 0.15:
+            self.zoom_lock(s, now, zoom_u)
+        if self.flash is not None:
+            ft = (now - self.flash) / 0.45
+            if ft >= 1:
+                self.flash = None
+            else:
+                a = round((1 - ft) * 0.85, 2)
+                for y in range(self.h):
+                    self.fx.tint(s, y, blend(WHITE, PINK, ft), a)
+                if ft < 0.7:
+                    s.center(self.h // 2, "  BILLBOARD HIJACKED // DEDSEC  ", PINK)
+        self.hud(s, now, zoom_u is not None, police_t)
         if random.random() < 0.004:
             self.callout = (random.choice(CALLOUTS), now)
         self.fx.apply(s, now, glitch)
+
+    ZOOM_T = 2.3
+
+    def zoom_lock(self, s, now, u):
+        """Target brackets around the billboard during the dive."""
+        cam = self.cam
+        z = self.board_z
+        a = cam.project((self.lane - 11.7, 20.7, z))
+        b = cam.project((self.lane + 11.7, 3.3, z))
+        if not a or not b:
+            return
+        x0, y0 = int(max(1, a[0])), int(max(3, a[1]))
+        x1, y1 = int(min(s.w - 2, b[0])), int(min(s.h - 4, b[1]))
+        if x1 - x0 < 8 or y1 - y0 < 4:
+            return
+        col = PINK if int(now * 8) % 2 else WHITE
+        s.brackets(x0, y0, x1 - x0 + 1, y1 - y0 + 1, col, arm=3)
+        label = "LOCK // BILLBOARD %d m" % max(0, int((z - cam.pos[2]) * 1.0))
+        s.text(x0 + 1, max(3, y0 - 1), label, col)
 
     def billboard_fn(self, now):
         if self.board_z is None or self.board_z < self.cam.pos[2] - 2:

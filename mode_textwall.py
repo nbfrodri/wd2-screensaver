@@ -8,7 +8,7 @@ import numpy as np
 
 from sysdata import DATA
 from lib import (BLACK, CYAN, DIM_PINK, GREEN, GREY, ORANGE, PINK, PURPLE, WHITE, YELLOW, Glitch,
-                 blend, ease_out, pulse)
+                 blend, ease_out, line_points, pulse)
 from widgets import PostFX
 
 NAME = "TEXTWALL"
@@ -198,49 +198,149 @@ def pad(m, p):
     return np.pad(m, p)
 
 
+# Bold block alphabet for the lettering pieces: 2-wide verticals, 7 rows.
+BOLD = {
+    "A": [".1111.", "11..11", "11..11", "111111", "11..11", "11..11", "11..11"],
+    "B": ["11111.", "11..11", "11..11", "11111.", "11..11", "11..11", "11111."],
+    "C": [".11111", "11....", "11....", "11....", "11....", "11....", ".11111"],
+    "D": ["11111.", "11..11", "11..11", "11..11", "11..11", "11..11", "11111."],
+    "E": ["111111", "11....", "11....", "11111.", "11....", "11....", "111111"],
+    "F": ["111111", "11....", "11....", "11111.", "11....", "11....", "11...."],
+    "G": [".11111", "11....", "11....", "11.111", "11..11", "11..11", ".1111."],
+    "H": ["11..11", "11..11", "11..11", "111111", "11..11", "11..11", "11..11"],
+    "I": ["11", "11", "11", "11", "11", "11", "11"],
+    "K": ["11..11", "11.11.", "1111..", "111...", "1111..", "11.11.", "11..11"],
+    "L": ["11....", "11....", "11....", "11....", "11....", "11....", "111111"],
+    "M": ["11...11", "111.111", "1111111", "11.1.11", "11...11", "11...11", "11...11"],
+    "N": ["11..11", "111.11", "111111", "11.111", "11..11", "11..11", "11..11"],
+    "O": [".1111.", "11..11", "11..11", "11..11", "11..11", "11..11", ".1111."],
+    "P": ["11111.", "11..11", "11..11", "11111.", "11....", "11....", "11...."],
+    "R": ["11111.", "11..11", "11..11", "11111.", "11.11.", "11..11", "11..11"],
+    "S": [".11111", "11....", "11....", ".1111.", "....11", "....11", "11111."],
+    "T": ["111111", "..11..", "..11..", "..11..", "..11..", "..11..", "..11.."],
+    "U": ["11..11", "11..11", "11..11", "11..11", "11..11", "11..11", ".1111."],
+    "W": ["11...11", "11...11", "11...11", "11.1.11", "11.1.11", "1111111", ".11.11."],
+    "X": ["11..11", "11..11", ".1111.", "..11..", ".1111.", "11..11", "11..11"],
+    "Y": ["11..11", "11..11", ".1111.", "..11..", "..11..", "..11..", "..11.."],
+    "!": ["11", "11", "11", "11", "11", "..", "11"],
+    " ": ["...", "...", "...", "...", "...", "...", "..."],
+}
+GLYPHS = {ch: np.array([[c == "1" for c in r] for r in g]) for ch, g in BOLD.items()}
+
+# Lettering colour schemes: fill top, mid, bottom, outline, 3D, cut-line, cloud.
+SCHEMES = {
+    "dedsec": [((255, 130, 215), (255, 15, 123), (150, 0, 150), WHITE, (0, 150, 175), INK, (26, 14, 40)),
+               ((170, 250, 255), (0, 210, 255), (0, 90, 210), INK, (210, 0, 120), WHITE, (36, 10, 46))],
+    "hack": [((230, 255, 120), (57, 230, 110), (0, 170, 230), INK, (200, 0, 110), WHITE, (30, 16, 48))],
+    "resist": [((255, 240, 90), (255, 140, 0), (230, 40, 40), INK, (0, 110, 150), (245, 245, 245), (40, 12, 44))],
+}
+
+
+def shift(m, dy, dx):
+    """Shift a bool mask (no wrap) by dy rows / dx cols."""
+    out = np.zeros_like(m)
+    h, w = m.shape
+    ys0, ys1 = max(0, dy), min(h, h + dy)
+    xs0, xs1 = max(0, dx), min(w, w + dx)
+    out[ys0:ys1, xs0:xs1] = m[ys0 - dy:ys1 - dy, xs0 - dx:xs1 - dx]
+    return out
+
+
+def bold_line(text, k, shear, bounce, base_id, phase):
+    gws = [GLYPHS.get(ch, GLYPHS[" "]).shape[1] for ch in text]
+    gh = 7 * k
+    extra = int(shear * gh) + 1
+    wcells = sum((g + 1) * k for g in gws) + extra
+    m = np.zeros((gh + 2 * bounce + 1, wcells), bool)
+    lid = np.full(m.shape, -1, np.int32)
+    x = 0
+    for i, ch in enumerate(text):
+        g = GLYPHS.get(ch, GLYPHS[" "])
+        big = np.kron(g, np.ones((k, k), bool))
+        dy = bounce + int(round(bounce * math.sin(i * 1.9 + phase)))
+        bw = big.shape[1]
+        for yy in range(gh):
+            off = int((gh - yy) * shear)
+            row = big[yy]
+            seg = m[dy + yy, x + off:x + off + bw]
+            seg |= row
+            lid[dy + yy, x + off:x + off + bw][row] = base_id + i
+        x += (g.shape[1] + 1) * k
+    return m, lid
+
+
+def ord_zigzag(shape, band):
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    nb = max(1, int(math.ceil(h / band)))
+    bi = yy // band
+    fr = np.where(bi % 2 == 0, xx / max(1, w - 1), 1 - xx / max(1, w - 1))
+    return (bi + fr) / nb
+
+
+def ord_columns(shape, band):
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    nb = max(1, int(math.ceil(w / band)))
+    bi = xx // band
+    fr = np.where(bi % 2 == 0, yy / max(1, h - 1), 1 - yy / max(1, h - 1))
+    return (bi + fr) / nb
+
+
+def ord_letters(lid, band):
+    """Letter by letter, each letter filled in a zigzag of horizontal strokes."""
+    order = np.zeros(lid.shape)
+    ids = [j for j in np.unique(lid) if j >= 0]
+    n = max(1, len(ids))
+    yy, xx = np.mgrid[0:lid.shape[0], 0:lid.shape[1]]
+    for rank, j in enumerate(ids):
+        sel = lid == j
+        ys, xs = yy[sel], xx[sel]
+        y0, x0, x1 = ys.min(), xs.min(), xs.max()
+        nb = max(1, int(math.ceil((ys.max() - y0 + 1) / band)))
+        bi = (ys - y0) // band
+        f = (xs - x0) / max(1, x1 - x0)
+        fr = np.where(bi % 2 == 0, f, 1 - f)
+        order[sel] = (rank + (bi + fr) / nb) / n
+    return order
+
+
+def spread_ids(lid, steps):
+    out = lid.copy()
+    for _ in range(steps):
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nb = np.roll(np.roll(out, dy, 0), dx, 1)
+            take = (out < 0) & (nb >= 0)
+            out[take] = nb[take]
+    return out
+
+
 class Layer:
-    def __init__(self, mask, ids, mode="zigzag", band=8, dur=None, rng=None):
-        self.mask = mask
-        self.ids = ids             # int array same shape or scalar
-        h, w = mask.shape
-        yy, xx = np.mgrid[0:h, 0:w]
-        if mode == "zigzag":
-            nb = max(1, int(math.ceil(h / band)))
-            bi = yy // band
-            fr = np.where(bi % 2 == 0, xx / max(1, w - 1), 1 - xx / max(1, w - 1))
-            self.order = (bi + fr) / nb
-            self.path = ("zz", nb, band, w)
-        elif mode == "columns":
-            nb = max(1, int(math.ceil(w / band)))
-            bi = xx // band
-            fr = np.where(bi % 2 == 0, yy / max(1, h - 1), 1 - yy / max(1, h - 1))
-            self.order = (bi + fr) / nb
-            self.path = ("col", nb, band, h)
-        else:   # stencil fog: random
-            self.order = rng.random_sample((h, w)) if rng is not None else np.random.rand(h, w)
-            self.path = ("rand",)
-        self.order = self.order + (np.random.rand(h, w) * 0.012)
-        n = int(mask.sum())
-        self.dur = dur if dur is not None else max(0.6, min(4.5, n / 900))
+    """One paint pass. Cells are pre-sorted by paint order; the can follows the frontier."""
+
+    def __init__(self, mask, ids, order, dur=None, can=True):
+        ys, xs = np.nonzero(mask)
+        o = order[ys, xs] + np.random.rand(ys.size) * 0.004
+        idx = np.argsort(o, kind="stable")
+        self.ys, self.xs, self.o = ys[idx], xs[idx], o[idx]
+        if np.isscalar(ids) or getattr(ids, "ndim", 0) == 0:
+            self.cid = int(ids)
+            self.ids = None
+        else:
+            self.cid = None
+            self.ids = np.asarray(ids)[ys, xs][idx]
+        self.n = int(ys.size)
+        self.dur = dur if dur is not None else max(0.6, min(4.5, self.n / 900))
         self.p = 0.0
+        self.i = 0
+        self.can = can
+        self.mask = mask
 
     def can_pos(self):
-        """position (x, y) in layer cells of the spray frontier"""
-        kind = self.path[0]
-        p = min(0.999, self.p)
-        if kind == "zz":
-            _, nb, band, w = self.path
-            b = int(p * nb)
-            fr = p * nb - b
-            x = fr * w if b % 2 == 0 else (1 - fr) * w
-            return x, (b + 0.5) * band
-        if kind == "col":
-            _, nb, band, h = self.path
-            b = int(p * nb)
-            fr = p * nb - b
-            y = fr * h if b % 2 == 0 else (1 - fr) * h
-            return (b + 0.5) * band, y
-        return None
+        if not self.can or self.n == 0:
+            return None
+        i = min(self.n - 1, self.i)
+        return self.xs[i], self.ys[i]
 
 
 class Piece:
@@ -255,11 +355,16 @@ class Piece:
         self.drips = []
         self.color = PINK
         self.stencil = False
+        self.drip_after = 0
+        self.drip_mask = None
+        self.drip_ids = None
         build = getattr(self, "b_" + kind)
         build(rng)
         h, w = self.layers[0].mask.shape
         self.h, self.w = h, w
-        self.v0 = int(max(3 * R, min(CH - h - 3 * R, rng.uniform(0.3, 0.6) * (CH - h))))
+        # top canvas row of the piece (canvas row 0 is the top of the wall)
+        lo, hi = 4, max(4, CH - 2 - h)
+        self.v0 = int(lo + rng.uniform(0.25, 0.75) * (hi - lo))
         self.width_units = w / R
 
     # -- builders ---------------------------------------------------------
@@ -268,67 +373,148 @@ class Piece:
         rows = (np.arange(h) * steps // max(1, h)).clip(0, steps - 1)
         return np.array(ids)[rows][:, None].repeat(w, 1)
 
-    def letters(self, rng, text, k, fill_a, fill_b, outline, shadow, jitter):
-        m = word_mask(text, k, gap=1, shear=0.28, jitter=jitter, rng=rng)
-        m = pad(m, 8)
-        m = smooth(m, 2)
-        out = dilate(m, 2) & ~m
-        sh = np.roll(np.roll(dilate(m, 2), 3, 0), 4, 1) & ~dilate(m, 2)
-        hl = m & ~np.roll(m, 2, 0) & ~np.roll(m, 2, 1)
-        hl2 = m & (np.random.rand(*m.shape) < 0.006)
+    def lettering(self, rng, lines, k, scheme, shear=0.18, title=""):
+        fa, fb, fc, outline, ext_c, cut_c, cloud_c = scheme
+        bounce = 2 if len(lines) == 1 else 1
+        rows, lids, nid = [], [], 0
+        phase = rng.uniform(0, 6)
+        for text in lines:
+            m, lid = bold_line(text, k, shear, bounce, nid, phase)
+            nid += len(text)
+            rows.append(m)
+            lids.append(lid)
+        gap = k + 3
+        W = max(r.shape[1] for r in rows)
+        H = sum(r.shape[0] for r in rows) + gap * (len(rows) - 1)
+        pad = 9
+        m = np.zeros((H + 2 * pad, W + 2 * pad + k), bool)
+        lid = np.full(m.shape, -1, np.int32)
+        spans = []
+        y = pad
+        for r, l in zip(rows, lids):
+            x = pad + (W - r.shape[1]) // 2
+            m[y:y + r.shape[0], x:x + r.shape[1]] |= r
+            lid[y:y + r.shape[0], x:x + r.shape[1]][l >= 0] = l[l >= 0]
+            spans.append((y + bounce, y + bounce + 7 * k))
+            y += r.shape[0] + gap
         h, w = m.shape
+        yy, xx = np.mgrid[0:h, 0:w]
+        # fill: three-tone split with a wavy seam and a bright seam line
+        t = np.zeros((h, w))
+        for y0, y1 in spans:
+            band = (yy >= y0 - 2) & (yy < y1 + 2)
+            t[band] = ((yy - y0) / max(1, y1 - y0) + 0.09 * np.sin(xx * 0.13 + phase))[band]
+        t = t.clip(0, 0.999)
+        steps = [paint(blend(fa, fb, i / 2)) for i in range(3)] + [paint(blend(fb, fc, i / 2)) for i in range(1, 4)]
+        fill_ids = np.array(steps)[(t * 6).astype(np.int64)]
+        seam = np.abs(t - 0.52) < 0.03
+        fill_ids = np.where(seam, paint(blend(fb, WHITE, 0.45)), fill_ids)
+        ro = 2
+        O = dilate(m, ro)
+        out = O & ~m
+        # 3D block extrusion down-right, lighter next to the letters
+        d3 = k + 1
+        ext = np.zeros_like(m)
+        ext_ids = np.zeros(m.shape, np.int64)
+        for i in range(d3, 0, -1):
+            s_ = shift(O, i, i)
+            ext |= s_
+            ext_ids[s_] = paint(blend(blend(ext_c, WHITE, 0.18), blend(ext_c, BLACK, 0.45), (i - 1) / max(1, d3 - 1)))
+        ext &= ~O
+        OE = O | ext
+        edge = ext & (~shift(OE, -1, 0) | ~shift(OE, 0, -1))
+        ext_ids[edge] = paint(blend(ext_c, BLACK, 0.7))
+        cut = dilate(OE, 1) & ~OE
+        ALL = OE | cut
+        # bubbly background cloud with a sprayed (speckled) rim
+        bub = dilate(ALL, 3)
+        for _ in range(max(3, w // 22)):
+            cx, cy, r = rng.uniform(pad, w - pad), rng.choice((pad, h - pad)), rng.uniform(3, 7)
+            bub |= ((xx - cx) ** 2 + (yy - cy) ** 2) < r * r
+        bub = smooth(bub, 2)
+        cloud = bub & ~ALL
+        rim = cloud & ~smooth(dilate(ALL, 2), 1)
+        cloud &= ~(rim & (np.random.rand(h, w) < 0.45))
+        cloud_ids = np.where(np.random.rand(h, w) < 0.07, paint(blend(cloud_c, WHITE, 0.12)), paint(cloud_c))
+        # shine: top edge of each stroke, left part of each letter
+        th = 1
+        top = m & ~shift(m, th, 0)
+        lx = np.zeros(m.shape)
+        for j in range(nid):
+            sel = lid == j
+            if sel.any():
+                xs = xx[sel]
+                lx[sel] = (xs - xs.min()) / max(1, xs.max() - xs.min())
+        shine = top & (lx < 0.55) & ~shift(out, 0, -th - 1)
+        # star glints on a few letter corners
+        glint = np.zeros_like(m)
+        for j in range(nid):
+            if rng.random() < 0.4:
+                sel = lid == j
+                if not sel.any():
+                    continue
+                gy, gx = yy[sel].min() - 1, xx[sel].min() + 1
+                for d in range(-3, 4):
+                    for e in (0, 1):
+                        if 0 <= gy + d < h and 0 <= gx + e < w:
+                            glint[gy + d, gx + e] = True
+                        if 0 <= gy + e < h and 0 <= gx + d < w:
+                            glint[gy + e, gx + d] = True
+        lid_o = spread_ids(lid, ro + 1)
+        nf = int(m.sum())
         self.layers = [
-            Layer(m, self.gradient(h, w, fill_a, fill_b), band=7),
-            Layer(sh, paint(shadow), mode="columns", band=10),
-            Layer(out, paint(outline), mode="columns", band=6),
-            Layer(hl | hl2, paint(WHITE), band=9),
+            Layer(cloud, cloud_ids, ord_zigzag(m.shape, 12), dur=1.4),
+            Layer(m, fill_ids, ord_letters(lid, max(2, k)), dur=max(2.2, nf / 1000)),
+            Layer(ext, ext_ids, ord_columns(m.shape, 8), dur=1.4),
+            Layer(out, paint(outline), ord_letters(np.where(out, lid_o, -1), 6), dur=2.0),
+            Layer(cut, paint(cut_c), ord_columns(m.shape, 10), dur=0.9),
+            Layer(shine & ~glint, paint(blend(fa, WHITE, 0.7)), ord_zigzag(m.shape, 8), dur=0.8),
+            Layer(glint, paint(WHITE), ord_zigzag(m.shape, 6), dur=0.4),
         ]
-        self.color = fill_a
+        bottom = O & ~shift(O, -1, 0)
+        self.drip_after = len(self.layers) - 1
+        self.drip_mask = bottom & (xx % 3 == 0)
+        self.drip_ids = paint(outline)
+        self.color = fb
         self.fillmask = m
+        self.title = title
 
     def b_dedsec(self, rng):
-        a, b = rng.choice([(PINK, PURPLE), (CYAN, (0, 90, 200)), (YELLOW, ORANGE), ((255, 90, 200), (120, 0, 160))])
-        self.letters(rng, "DEDSEC", 4, a, b, rng.choice([WHITE, INK]), (40, 0, 60), 4)
-        self.title = "DEDSEC"
+        self.lettering(rng, ["DEDSEC"], 4, rng.choice(SCHEMES["dedsec"]), title="DEDSEC")
 
     def b_hack(self, rng):
-        top = word_mask("HACK THE", 2, shear=0.2, rng=rng)
-        bot = word_mask("PLANET!", 2, shear=0.2, rng=rng)
-        w = max(top.shape[1], bot.shape[1])
-        m = np.zeros((top.shape[0] + bot.shape[0] + 2, w), bool)
-        m[:top.shape[0], :top.shape[1]] = top
-        m[top.shape[0] + 2:, (w - bot.shape[1]) // 2:(w - bot.shape[1]) // 2 + bot.shape[1]] = bot
-        m = pad(m, 6)
-        out = dilate(m, 1) & ~m
-        sh = np.roll(np.roll(dilate(m, 1), 2, 0), 2, 1) & ~dilate(m, 1)
+        self.lettering(rng, ["HACK THE", "PLANET!"], 3, SCHEMES["hack"][0], shear=0.14, title="HACK THE PLANET")
+
+    def b_resist(self, rng):
+        self.lettering(rng, ["RESIST"], 4, SCHEMES["resist"][0], shear=0.2, title="RESIST")
+
+    def _simple(self, m, layers, color, title, drip=True):
         h, w = m.shape
-        self.layers = [Layer(m, self.gradient(h, w, CYAN, GREEN), band=5),
-                       Layer(out, paint(PINK), mode="columns", band=5),
-                       Layer(sh, paint(INK), mode="columns", band=8)]
-        self.color = CYAN
+        self.layers = layers
+        self.color = color
         self.fillmask = m
-        self.title = "HACK THE PLANET"
+        self.title = title
+        if drip:
+            self.drip_after = 0
+            self.drip_mask = m & ~shift(m, -1, 0)
+            self.drip_ids = layers[0].ids_full
 
     def b_skull(self, rng):
         m = pad(smooth(bitmap_mask(SKULL, 3), 1), 6)
         out = dilate(m, 2) & ~m
         h, w = m.shape
-        eyes = pad(bitmap_mask(SKULL, 3, "."), 6) & dilate(m, 1) & ~m
-        self.layers = [Layer(m, self.gradient(h, w, WHITE, (200, 200, 220)), band=6),
-                       Layer(out, paint(INK), mode="columns", band=6),
-                       Layer(m & ~np.roll(m, 2, 0), paint(PINK), band=10)]
-        self.color = WHITE
-        self.fillmask = m
-        self.title = "SKULL"
+        g = self.gradient(h, w, WHITE, (200, 200, 220))
+        L0 = Layer(m, g, ord_zigzag(m.shape, 6))
+        L0.ids_full = g
+        self._simple(m, [L0, Layer(out, paint(INK), ord_columns(m.shape, 6)),
+                         Layer(m & ~shift(m, 2, 0), paint(PINK), ord_zigzag(m.shape, 10))], WHITE, "SKULL")
 
     def b_crown(self, rng):
         m = pad(dilate(bitmap_mask(CROWN, 4), 1), 6)
         out = dilate(m, 1) & ~m
-        self.layers = [Layer(m, paint(YELLOW), mode="columns", band=5),
-                       Layer(out, paint(INK), mode="columns", band=5)]
-        self.color = YELLOW
-        self.fillmask = m
-        self.title = "CROWN"
+        L0 = Layer(m, paint(YELLOW), ord_columns(m.shape, 5))
+        L0.ids_full = paint(YELLOW)
+        self._simple(m, [L0, Layer(out, paint(INK), ord_columns(m.shape, 5))], YELLOW, "CROWN")
 
     def b_arrows(self, rng):
         a = bitmap_mask(ARROW, 4)
@@ -338,11 +524,10 @@ class Piece:
         m = pad(smooth(m, 1), 6)
         out = dilate(m, 2) & ~m
         h, w = m.shape
-        self.layers = [Layer(m, self.gradient(h, w, (0, 200, 255), PINK), band=6),
-                       Layer(out, paint(WHITE), mode="columns", band=6)]
-        self.color = CYAN
-        self.fillmask = m
-        self.title = "ARROWS"
+        g = self.gradient(h, w, (0, 200, 255), PINK)
+        L0 = Layer(m, g, ord_zigzag(m.shape, 6))
+        L0.ids_full = g
+        self._simple(m, [L0, Layer(out, paint(WHITE), ord_columns(m.shape, 6))], CYAN, "ARROWS")
 
     def b_wrench(self, rng):
         k = 3
@@ -351,9 +536,9 @@ class Piece:
         led2 = pad(bitmap_mask(WRENCH, k, "2"), 6)
         teeth = pad(bitmap_mask(WRENCH, k, "3"), 6)
         rng2 = np.random.RandomState(rng.randint(0, 9999))
-        self.layers = [Layer(black, paint(INK), mode="rand", dur=2.2, rng=rng2),
+        self.layers = [Layer(black, paint(INK), rng2.random_sample(black.shape), dur=2.2, can=False),
                        Layer(led1 | led2 | teeth, np.where(led1, paint(CYAN), np.where(led2, paint(PINK), paint(WHITE))),
-                             mode="rand", dur=1.4, rng=rng2)]
+                             rng2.random_sample(black.shape), dur=1.4, can=False)]
         self.stencil = True
         self.color = CYAN
         self.fillmask = black
@@ -405,6 +590,87 @@ class Poster:
         self.dead = False
 
 
+# ------------------------------------------------------------------ baked wall texture
+TR = 4                 # texture cells per wall unit
+TU = 384               # ring period in units (multiple of brick 6 and service bay 128)
+TW = TU * TR
+TH = int(WH * TR)
+
+
+def bake_wall():
+    V = ((TH - 1 - np.arange(TH)) + 0.5)[:, None] / TR          # row 0 = top of wall
+    U = (np.arange(TW) + 0.5)[None, :] / TR
+    V = np.broadcast_to(V, (TH, TW))
+    U = np.broadcast_to(U, (TH, TW))
+    row = np.floor(V / 3.0)
+    off = (row % 2) * 3.0
+    bx = np.floor((U + off) / 6.0) % (TU // 6)
+    hsh = ((bx.astype(np.int64) * 73856093) ^ (row.astype(np.int64) * 19349663)) & 0xFFFF
+    bid = np.array(BRICKS)[hsh % len(BRICKS)]
+    mort = ((V % 3.0) < 0.55) | (((U + off) % 6.0) < 0.55)
+    ids = np.where(mort, MORTAR, bid)
+    ids = np.where(V > WH - 1.8, np.where(V > WH - 0.6, COPING2, COPING), ids)
+    service_u = U % 128
+    vent = (service_u > 92) & (service_u < 108) & (V > 6) & (V < 17)
+    trim = vent & ((service_u < 92.6) | (service_u > 107.4) | (V < 6.5) | (V > 16.5))
+    slats = vent & (((V * 1.4) % 1) < 0.28)
+    ids = np.where(vent, np.where(trim | slats, VENT_EDGE, VENT), ids)
+    conduit = (np.abs(service_u - 89) < 0.4) & (V < 30)
+    ids = np.where(conduit, PIPE, ids)
+    clay = ((np.floor(U * 3).astype(np.int64) * 31) ^ (np.floor(V * 3).astype(np.int64) * 73)) % 23
+    relief = 0.90 + clay / 180
+    relief = np.where((V % 3) < 0.7, relief * 0.68, relief)
+    relief = np.where((V % 3) > 2.65, relief * 1.16, relief)
+    damp = (V < 4.5 + (hsh % 11) * 0.3) & (((U + off) % 6) < 2.1)
+    relief = np.where(damp, relief * 0.65, relief)
+    relief = np.where(vent | conduit, 1.0, relief)
+    return ids.astype(np.int64), relief.astype(np.float32)
+
+
+# ------------------------------------------------------------------ street sprites
+CAT_A = [".X.X..........",
+         ".XXX........T.",
+         "XEXX.........T",
+         "XXXX........T.",
+         ".XSXSXSXSXXXT.",
+         "..XXXXXXXXXX..",
+         "..X.X....X.X..",
+         ".X...X..X...X."]
+CAT_B = CAT_A[:6] + ["...XX....XX...", "...X.X...X.X.."]
+CAT_COL = {"X": (196, 118, 52), "S": (140, 74, 30), "T": (180, 104, 44), "E": (190, 255, 90)}
+PIGEON = {
+    "stand": ["HH...", "NBBBT", ".BBB.", "..l.."],
+    "peck": [".....", "NBBBT", "HBBB.", "..l.."],
+    "fly1": ["W...W", ".WBW.", "..H.."],
+    "fly2": [".....", "WWBWW", "..H.."],
+}
+PIGEON_COL = {"H": (96, 96, 116), "N": (80, 140, 125), "B": (150, 150, 166), "T": (72, 72, 88),
+              "l": (210, 90, 90), "W": (176, 176, 192)}
+SKATER = ["....HHH.....",
+          "...HHHHH....",
+          "...HHSSS....",
+          "...HHSES....",
+          "....HHS.....",
+          "...HHHHH....",
+          "..HHHPPHH...",
+          ".HH.HPHHHH..",
+          "SH..HHHH.HS.",
+          "....HHHH...S",
+          "....HHHH....",
+          "....JJJJ....",
+          "...JJJ.JJ...",
+          "...JJ...JJ..",
+          "..JJ.....JJ.",
+          "..JJ.....JJ.",
+          ".KKK....KKK.",
+          "BBBBBBBBBBBB",
+          ".WW......WW."]
+SKATER_COL = {"H": (52, 52, 66), "P": (255, 15, 123), "S": (200, 150, 116), "E": (40, 30, 30),
+              "J": (44, 58, 96), "K": (226, 226, 226), "B": (150, 84, 44), "W": (240, 220, 90)}
+CAM_HEAD = ["GGGGGL.", "GGGGGLL", "DDDDDL.", ".A....."]
+CAM_COL = {"G": (178, 180, 190), "L": (40, 44, 56), "D": (110, 112, 124), "A": (70, 72, 84)}
+
+
 class Mode:
     def __init__(self, w, h):
         self.w, self.h = w, h
@@ -418,22 +684,38 @@ class Mode:
         self.yaw = 0.22
         self.camx = 0.0
         a = (np.arange(w) - self.cx) / self.f
-        self.A = a
+        self.A = a.astype(np.float32)
         self.Bv = (-(np.arange(self.ph) - self.cy) / self.f)[:, None].astype(np.float32)
+        self.rowsP = np.arange(self.ph, dtype=np.float32)[:, None]
         self.canvas = np.zeros((CH, CW), np.int16)
+        self.wall_ids, self.wall_rel = bake_wall()
         self.pieces = []
         self.posters = []
         self.stickers = []          # pending slaps
         self.next_u = 30.0
-        self.kinds = ["dedsec", "skull", "hack", "crown", "wrench", "arrows"]
-        self.rng.shuffle(self.kinds)
+        # lettering pieces alternate with the bitmap pieces; DEDSEC opens the wall
+        art = ["skull", "crown", "wrench", "arrows"]
+        self.rng.shuffle(art)
+        words = ["hack", "resist"]
+        self.rng.shuffle(words)
+        self.kinds = ["dedsec", art[0], words[0], art[1], words[1], art[2], "dedsec", art[3]]
         self.kind_i = 0
         self.spray = []
-        self.lamp_flick = {}
         self.make_skyline()
         self.pal = []
         self.ncols_pal = 0
         self.palette()
+        # street life
+        self.cat = None
+        self.next_cat = self.last + self.rng.uniform(3, 8)
+        self.flocks = []
+        self.rider = None
+        self.next_rider = self.last + self.rng.uniform(4, 9)
+        self.cams = []
+        self.next_cam_u = 70.0
+        self.cam_status = ("ctOS CAM: ONLINE", (255, 60, 60))
+        self.occ = None
+        self.pud_rows = None
         # pre-seed some pieces so the first frame is not empty
         for _ in range(3):
             self.spawn_slot()
@@ -478,13 +760,11 @@ class Mode:
         kind = self.kinds[self.kind_i % len(self.kinds)]
         self.kind_i += 1
         p = Piece(kind, self.next_u, self.rng)
-        # clear canvas region
         c0 = int(p.u0 * R) - 20
         cols = np.arange(c0, c0 + p.w + 60) % CW
         self.canvas[:, cols] = 0
         self.pieces.append(p)
         end = p.u0 + p.width_units
-        # a poster or old-tag gap after the piece
         gap = self.rng.uniform(14, 26)
         if self.rng.random() < 0.6:
             pu = end + gap * 0.5
@@ -501,25 +781,24 @@ class Mode:
         p.li = 0
         p.crew = self.rng.choice(CREW)
 
-    def write(self, p, layer, sel):
-        """write selected layer cells into the ring canvas"""
-        ys, xs = np.nonzero(sel)
+    def write_cells(self, p, ys, xs, ids):
         if ys.size == 0:
             return
-        ids = layer.ids if np.isscalar(layer.ids) or getattr(layer.ids, "ndim", 0) == 0 else layer.ids[ys, xs]
-        cv = CH - 1 - (p.v0 + ys)
+        cv = p.v0 + ys
         cu = (int(p.u0 * R) + xs) % CW
         ok = (cv >= 0) & (cv < CH)
-        self.canvas[cv[ok], cu[ok]] = ids if np.isscalar(ids) else np.asarray(ids)[ok]
+        self.canvas[cv[ok], cu[ok]] = ids if np.isscalar(ids) else ids[ok]
 
     def advance_piece(self, p, dt, now):
         lay = p.layers[p.li]
-        p0 = lay.p
         lay.p = min(1.0, lay.p + dt / lay.dur)
-        sel = lay.mask & (lay.order >= p0) & (lay.order < lay.p + (0.02 if lay.p >= 1 else 0))
-        self.write(p, lay, sel)
+        j = lay.n if lay.p >= 1.0 else int(np.searchsorted(lay.o, lay.p * (lay.o[-1] if lay.n else 1)))
+        if j > lay.i:
+            sl = slice(lay.i, j)
+            self.write_cells(p, lay.ys[sl], lay.xs[sl], lay.cid if lay.cid is not None else lay.ids[sl])
+            lay.i = j
         if lay.p >= 1.0:
-            if p.li == 0 and not p.stencil:
+            if p.li == p.drip_after and p.drip_mask is not None:
                 self.make_drips(p)
             p.li += 1
             if p.li >= len(p.layers):
@@ -527,17 +806,15 @@ class Mode:
                 p.done_at = now
 
     def make_drips(self, p):
-        m = p.fillmask
-        bottom = m & ~np.roll(m, -1, 0)
-        ys, xs = np.nonzero(bottom)
+        ys, xs = np.nonzero(p.drip_mask)
         if ys.size == 0:
             return
-        sel = np.random.choice(ys.size, min(ys.size, max(3, ys.size // 25)), replace=False)
-        lay = p.layers[0]
+        sel = np.random.choice(ys.size, min(ys.size, max(3, ys.size // 9)), replace=False)
         for i in sel:
             y, x = ys[i], xs[i]
-            cid = lay.ids if np.isscalar(lay.ids) or getattr(lay.ids, "ndim", 0) == 0 else int(lay.ids[y, x])
-            p.drips.append([x, y + 1, 0.0, self.rng.uniform(3, 18), self.rng.uniform(2, 7), int(cid)])
+            ids = p.drip_ids
+            cid = int(ids) if np.isscalar(ids) or getattr(ids, "ndim", 0) == 0 else int(ids[y, x])
+            p.drips.append([x, y + 1, 0.0, self.rng.uniform(3, 14), self.rng.uniform(2, 6), cid])
 
     def step_drips(self, p, dt):
         for d in p.drips:
@@ -547,9 +824,11 @@ class Mode:
             d[2] = min(d[3], d[2] + d[4] * dt)
             d[4] *= 0.995
             for k in range(old, int(d[2]) + 1):
-                cv = CH - 1 - (p.v0 + d[1] + k)
+                cv = p.v0 + d[1] + k
                 if 0 <= cv < CH:
                     self.canvas[cv, (int(p.u0 * R) + d[0]) % CW] = d[5]
+                    if k == int(d[3]) and cv + 1 < CH:   # the bead at the end of the run
+                        self.canvas[cv + 1, (int(p.u0 * R) + d[0]) % CW] = d[5]
 
     # ------------------------------------------------------------ projection
     def wall_to_screen(self, u, v, z=ZW):
@@ -570,39 +849,33 @@ class Mode:
         tw = ZW / dzw                                   # per column depth to wall
         u = self.camx + tw * dxw                        # per column wall x
         B = self.Bv
+        ph, w = self.ph, self.w
+        rowsP = self.rowsP
         v = HCAM + B * tw[None, :]                      # (ph, w)
+        r_top = self.cy - self.f * (WH - HCAM) / tw     # wall top row per column
+        r_bot = self.cy + self.f * HCAM / tw            # wall bottom row per column
+        s1 = int(min(ph, max(0, math.ceil(r_top.max()) + 1)))
+        g0 = int(min(ph, max(0, math.floor(r_bot.min()))))
         wall = (v >= 0) & (v < WH)
         sky = v >= WH
         ground = v < 0
-        uu = np.broadcast_to(u[None, :], v.shape)
-        # bricks
-        row = np.floor(v / 3.0)
-        off = (row % 2) * 3.0
-        bx = np.floor((uu + off) / 6.0)
-        hsh = ((bx.astype(np.int64) * 73856093) ^ (row.astype(np.int64) * 19349663)) & 0xFFFF
-        bid = np.array(BRICKS)[hsh % len(BRICKS)]
-        mort = ((v % 3.0) < 0.55) | (((uu + off) % 6.0) < 0.55)
-        ids = np.where(mort, MORTAR, bid)
-        ids = np.where(v > WH - 1.8, np.where(v > WH - 0.6, COPING2, COPING), ids)
-        # paint canvas
+        # wall: baked bricks + paint canvas
+        tu = (np.floor(u * TR).astype(np.int64)) % TW
+        tv = np.clip((TH - 1 - np.floor(v * TR)).astype(np.int64), 0, TH - 1)
+        ids = self.wall_ids[tv, tu[None, :]]
+        rel = self.wall_rel[tv, tu[None, :]]
         cu = (np.floor(u * R).astype(np.int64)) % CW
         cv = np.clip((CH - 1 - np.floor(v * R)).astype(np.int64), 0, CH - 1)
         pv = self.canvas[cv, cu[None, :]]
         painted = wall & (pv > 0) & (v < WH - 1.8)
         ids = np.where(painted, pv, ids)
-        # Attached street details: recessed service vents and conduit on the
-        # actual wall plane. They inherit the camera's perspective and lighting.
-        service_u = uu % 128
-        vent = wall & (service_u > 92) & (service_u < 108) & (v > 6) & (v < 17)
-        trim = vent & ((service_u < 92.6) | (service_u > 107.4) | (v < 6.5) | (v > 16.5))
-        slats = vent & (((v * 1.4) % 1) < 0.28)
-        ids = np.where(vent, np.where(trim | slats, VENT_EDGE, VENT), ids)
-        conduit = wall & (np.abs(service_u - 89) < 0.4) & (v < 30)
-        ids = np.where(conduit, PIPE, ids)
+        uu = None
         # posters
         for po in self.posters:
             if po.u0 > u[-1] + 5 or po.u0 + po.wu < u[0] - 5:
                 continue
+            if uu is None:
+                uu = np.broadcast_to(u[None, :], v.shape)
             lx = (uu - po.u0) / po.wu
             ly = (po.v0 - v) / po.hu
             inside = wall & (lx >= 0) & (lx < 1) & (ly >= 0) & (ly < 1)
@@ -616,62 +889,86 @@ class Mode:
             front = inside & (d <= c)
             ids = np.where(front, po.img[iy, ix], ids)
             if c < 2.0:
-                mx, my = lx + (c - d), ly + (c - d)   # mirror across x+y=c
-                flap = inside & (d <= c) & (mx >= 0) & (mx < 1) & (my >= 0) & (my < 1) & (2 * c - d <= 2)
-                flap = (wall & (lx + ly <= c) & ((lx + (c - d)) < 1) & ((ly + (c - d)) < 1) & (lx >= 0) & (ly >= 0)
-                        & (lx < 1) & (ly < 1) & (d >= 2 * c - 2))
+                flap = (inside & (d <= c) & ((lx + (c - d)) < 1) & ((ly + (c - d)) < 1) & (d >= 2 * c - 2))
                 ids = np.where(flap, np.where((c - d) < 0.06, PAPER_SHADE, PAPER_BACK), ids)
-        # ground
-        with np.errstate(divide="ignore", invalid="ignore"):
-            tg = np.where(B < -1e-4, HCAM / -B, 1e9)
-        gx = self.camx + tg * dxw[None, :]
-        gz = tg * dzw[None, :]
-        side = gz > ZW - 13
-        curb = (gz > ZW - 14) & ~side
-        gids = np.where(side, np.where(((gx % 8) < 0.35) | ((gz % 8) < 0.35), JOINT, SIDEWALK),
-                        np.where(curb, CURB, np.where((np.abs(gz - (ZW - 26)) < 0.35) & ((gx % 12) < 6), LANE, ROAD)))
-        ids = np.where(ground, gids, ids)
-        # sky + skyline
-        ang = ((self.yaw + np.arctan(A)) * 400 + self.camx * 0.6).astype(np.int64) % self.sky_h.size
-        hgt = self.sky_h[ang]
-        top_py = self.cy - self.f * (WH - HCAM) / tw            # wall top row per column
-        rowsP = np.arange(self.ph)[:, None]
-        skyl = sky & (rowsP > (top_py - hgt * 0.5)[None, :])
-        sk_band = np.clip(rowsP * 6 // max(1, self.ph // 2), 0, 5)
-        sids = np.array(SKY)[sk_band]
-        sids = np.broadcast_to(sids, v.shape)
-        sids = np.where(skyl, np.where(((rowsP * 5 + ang[None, :] * 3) % 17 == 0), SKYWIN, SKYLINE), sids)
-        star = sky & ~skyl & (((rowsP * 131 + ang[None, :] * 71) % 97) == 0)
-        sids = np.where(star, STAR, sids)
-        ids = np.where(sky, sids, ids)
-
-        # lighting
+            rel = np.where(inside, 1.0, rel)
+        # lamp light on the wall
         li = np.round((u - LAMP_SP / 2) / LAMP_SP)
         lxp = li * LAMP_SP + LAMP_SP / 2
-        inten = np.array([self.lamp_level(int(k), now, beat) for k in li])
+        uk, inv = np.unique(li, return_inverse=True)
+        inten = np.array([self.lamp_level(int(k), now, beat) for k in uk], np.float32)[inv]
         du = (u - lxp)[None, :]
         dv = LAMP_H - v
         sig = 7 + np.maximum(dv, 0) * 0.85
         I = 0.18 + inten[None, :] * np.exp(-(du * du) / (2 * sig * sig)) * np.exp(-np.maximum(-dv, 0) / 3.5) * 1.05
-        # ground pools
-        gd2 = (gx - lxp[None, :]) ** 2 + (gz - LAMP_Z) ** 2 * 1.4
-        Ig = 0.16 + inten[None, :] * np.exp(-gd2 / 260)
-        I = np.where(ground, Ig, I)
-        I = np.where(painted, I + 0.22, I)
-        # Mortar relief, irregular clay chips and damp streaks remain fixed in
-        # world coordinates as the camera moves past; paint keeps its pigment.
-        clay = ((np.floor(uu * 3).astype(np.int64) * 31) ^
-                (np.floor(v * 3).astype(np.int64) * 73)) % 23
-        relief = 0.90 + clay / 180
-        relief = np.where((v % 3) < 0.7, relief * 0.68, relief)
-        relief = np.where((v % 3) > 2.65, relief * 1.16, relief)
-        damp = (v < 4.5 + (hsh % 11) * 0.3) & (((uu + off) % 6) < 2.1)
-        relief = np.where(damp, relief * 0.65, relief)
-        I = np.where(wall & ~painted & ~vent & ~conduit, I * relief, I)
+        I = np.where(painted, I + 0.22, I * rel)
+        # ground (only rows that can contain it)
+        if g0 < ph:
+            Bg = B[g0:]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                tg = np.where(Bg < -1e-4, HCAM / -Bg, 1e9).astype(np.float32)
+            gx = self.camx + tg * dxw[None, :]
+            gz = tg * dzw[None, :]
+            side = gz > ZW - 13
+            curb = (gz > ZW - 14) & ~side
+            gids = np.where(side, np.where(((gx % 8) < 0.35) | ((gz % 8) < 0.35), JOINT, SIDEWALK),
+                            np.where(curb, CURB, np.where((np.abs(gz - (ZW - 26)) < 0.35) & ((gx % 12) < 6), LANE, ROAD)))
+            gsel = ground[g0:]
+            ids[g0:] = np.where(gsel, gids, ids[g0:])
+            gd2 = (gx - lxp[None, :]) ** 2 + (gz - LAMP_Z) ** 2 * 1.4
+            Ig = 0.16 + inten[None, :] * np.exp(-gd2 / 260)
+            I[g0:] = np.where(gsel, Ig, I[g0:])
+            # puddles: hashed blobs on the road and along the curb
+            cell = np.floor(gx / 38.0).astype(np.int64)
+            hh = (cell * 2654435761) & 0xFFFF
+            pcx = cell * 38.0 + 14 + (hh % 11)
+            pz = ZW - 17 - ((hh >> 4) % 11)
+            pa = 6.0 + (hh >> 8) % 7
+            pb = 2.6 + ((hh >> 3) % 4) * 0.7
+            dd = ((gx - pcx) / pa) ** 2 + ((gz - pz) / pb) ** 2 + 0.18 * np.sin(gx * 0.9 + gz * 1.7)
+            pud = gsel & (hh % 3 != 0) & (dd < 1.0) & (gz < ZW - 1)
+            self.pud = (g0, pud)
+        else:
+            self.pud = None
+        # sky + skyline (only rows that can contain it)
+        if s1 > 0:
+            ang = ((self.yaw + np.arctan(A)) * 400 + self.camx * 0.6).astype(np.int64) % self.sky_h.size
+            hgt = self.sky_h[ang]
+            rs = rowsP[:s1]
+            skys = sky[:s1]
+            skyl = skys & (rs > (r_top - hgt * 0.5)[None, :])
+            sk_band = np.clip(np.arange(s1) * 6 // max(1, ph // 2), 0, 5)
+            sids = np.broadcast_to(np.array(SKY)[sk_band][:, None], skys.shape)
+            ri = np.arange(s1)[:, None]
+            sids = np.where(skyl, np.where(((ri * 5 + ang[None, :] * 3) % 17 == 0), SKYWIN, SKYLINE), sids)
+            star = skys & ~skyl & (((ri * 131 + ang[None, :] * 71) % 97) == 0)
+            sids = np.where(star, STAR, sids)
+            ids[:s1] = np.where(skys, sids, ids[:s1])
         lvl = np.clip((I * (L - 1)).astype(np.int64), 0, L - 1)
         # foreground: lamp posts, poles, fence
-        ids, lvl = self.foreground(ids, lvl, v, dxw, dzw, B, now, beat)
-        return ids * L + lvl, u
+        ids, lvl, occ = self.foreground(ids, lvl, dxw, dzw, B)
+        idx = ids * L + lvl
+        # puddle reflections: mirror about the wall foot, darkened, with a slow shimmer
+        if self.pud is not None:
+            g0, pud = self.pud
+            pud = pud & (occ[g0:] > 1e8)
+            ys, xs = np.nonzero(pud)
+            if ys.size:
+                ry = ys + g0
+                src = (2 * r_bot[xs] - ry + np.sin(ry * 0.9 + now * 2.6) * 0.8).astype(np.int64)
+                src = np.clip(src, 0, ph - 1)
+                rv = idx[src, xs]
+                lv = rv % L
+                rv = rv - lv + np.maximum(0, lv - 1)
+                edge = ~pud[np.clip(ys - 1, 0, pud.shape[0] - 1), xs]
+                rv = np.where(edge, CURB * L + 4, rv)
+                idx[ry, xs] = rv
+            self.pud_mask = (g0, pud)
+        else:
+            self.pud_mask = None
+        self.occ = occ
+        self.r_bot = r_bot
+        return idx, u
 
     def lamp_level(self, k, now, beat):
         r = (k * 2654435761) & 0xFFFF
@@ -684,32 +981,55 @@ class Mode:
                 base *= 0.25
         return base * (0.86 + 0.24 * beat)
 
-    def foreground(self, ids, lvl, v, dxw, dzw, B, now, beat):
-        # lamp posts (just in front of the wall)
+    def light_at(self, u):
+        k = round((u - LAMP_SP / 2) / LAMP_SP)
+        lx = k * LAMP_SP + LAMP_SP / 2
+        inten = self.lamp_level(int(k), self.last, DATA.beat)
+        return 0.42 + 0.7 * inten * math.exp(-((u - lx) ** 2) / 300)
+
+    def foreground(self, ids, lvl, dxw, dzw, B):
+        rowsP = self.rowsP
+        occ = np.full(ids.shape, 1e9, np.float32)
+        # lamp posts (just in front of the wall): per column test + row range
         t_l = LAMP_Z / dzw
         xl = self.camx + t_l * dxw
-        vl = HCAM + B * t_l[None, :]
         k = np.round((xl - LAMP_SP / 2) / LAMP_SP)
         lpx = k * LAMP_SP + LAMP_SP / 2
-        post = (np.abs(xl - lpx) < 0.45)[None, :] & (vl >= -0.2) & (vl < LAMP_H)
-        arm = (np.abs(xl - lpx - 2.2) < 2.6)[None, :] & (np.abs(vl - LAMP_H) < 0.5)
-        m = post | arm
-        ids = np.where(m, POST, ids)
-        lvl = np.where(m, 2, lvl)
-        # near poles + chain fence
+        ry0 = self.cy - self.f * (LAMP_H - HCAM) / t_l
+        ry1 = self.cy - self.f * (-0.2 - HCAM) / t_l
+        ryarm = (self.f * 0.5 / t_l)
+        pc = np.nonzero((xl - lpx > -0.45) & (xl - lpx < 4.8))[0]
+        if pc.size:
+            rp = rowsP
+            d = (xl - lpx)[pc]
+            post = (np.abs(d) < 0.45)[None, :] & (rp >= ry0[pc][None, :]) & (rp <= ry1[pc][None, :])
+            arm = (np.abs(d - 2.2) < 2.6)[None, :] & (np.abs(rp - ry0[pc][None, :]) <= ryarm[pc][None, :])
+            m = post | arm
+            ids[:, pc] = np.where(m, POST, ids[:, pc])
+            lvl[:, pc] = np.where(m, 2, lvl[:, pc])
+            so = occ[:, pc]
+            so[m] = LAMP_Z
+            occ[:, pc] = so
+        # near poles + chain fence, evaluated only on the columns that hold them
         t_f = FG_Z / dzw
         xf = self.camx * 1.0 + t_f * dxw
-        vf = HCAM + B * t_f[None, :]
         seg = np.floor(xf / 46.0)
         lx = xf - seg * 46.0
         has_fence = ((seg.astype(np.int64) * 7) % 5 < 2)
-        pole = (lx < 0.5)[None, :] & (vf >= -1) & (vf < 26)
-        fence = (has_fence & (lx > 0.5) & (lx < 30))[None, :] & (vf >= -1) & (vf < 13) & \
-            ((((xf[None, :] + vf) % 1.6) < 0.16) | (((xf[None, :] - vf) % 1.6) < 0.16) | (np.abs(vf - 13) < 0.2))
-        mf = pole | fence
-        ids = np.where(mf, np.where(pole, POST, FENCE), ids)
-        lvl = np.where(mf, np.where(pole, 1, 3), lvl)
-        return ids, lvl
+        cols = np.nonzero((lx < 0.5) | (has_fence & (lx > 0.5) & (lx < 30)))[0]
+        if cols.size:
+            vf = HCAM + B * t_f[cols][None, :]
+            xc = xf[cols][None, :]
+            pole = (lx[cols] < 0.5)[None, :] & (vf >= -1) & (vf < 26)
+            fence = (lx[cols] >= 0.5)[None, :] & (vf >= -1) & (vf < 13) & \
+                ((((xc + vf) % 1.6) < 0.16) | (((xc - vf) % 1.6) < 0.16) | (np.abs(vf - 13) < 0.2))
+            mf = pole | fence
+            sub_i, sub_l, sub_o = ids[:, cols], lvl[:, cols], occ[:, cols]
+            ids[:, cols] = np.where(mf, np.where(pole, POST, FENCE), sub_i)
+            lvl[:, cols] = np.where(mf, np.where(pole, 1, 3), sub_l)
+            sub_o[mf] = FG_Z
+            occ[:, cols] = sub_o
+        return ids, lvl, occ
 
     # ------------------------------------------------------------ main
     def step(self, s, now):
@@ -719,10 +1039,8 @@ class Mode:
         self.camx += 6.0 * dt
         self.yaw = 0.22 + 0.05 * math.sin(now * 0.11)
 
-        # slots ahead
         while self.next_u < self.camx + 230:
             self.spawn_slot()
-        # start / advance painting
         active = []
         for p in self.pieces:
             if p.state == "wait":
@@ -733,7 +1051,6 @@ class Mode:
                 self.advance_piece(p, dt, now)
                 active.append(p)
             self.step_drips(p, dt)
-        # posters peel
         for po in self.posters:
             q = self.wall_to_screen(po.u0, po.v0)
             if po.peel_speed == 0 and q and q[0] < self.w * 0.6 and self.rng.random() < 0.02:
@@ -745,33 +1062,51 @@ class Mode:
                 if po.peel < 0.0:
                     po.dead = True
         self.posters = [p for p in self.posters if not p.dead]
-        # stickers
         if self.rng.random() < dt * 0.35:
             self.slap_sticker(now)
         self.palette()
 
         idx, ucols = self.raster(now, beat)
-        # lamp cones (screen space brighten) & heads
         heads = self.draw_lamps_prep(ucols)
         if heads:
-            rows = np.arange(self.ph)[:, None]
-            xs = np.arange(self.w)[None, :]
             for hx, hy, inten in heads:
                 if inten < 0.4:
                     continue
-                cone = (rows > hy + 1) & (np.abs(xs - hx) < (rows - hy) * 0.42 + 0.5) & ((rows - hy) < self.ph * 0.75)
-                idx = np.where(cone & ((idx % L) < L - 1), idx + 1, idx)
+                r0, r1 = max(0, hy + 2), min(self.ph, int(hy + self.ph * 0.75))
+                if r1 <= r0:
+                    continue
+                spread = (r1 - hy) * 0.42 + 1
+                c0, c1 = max(0, int(hx - spread)), min(self.w, int(hx + spread) + 1)
+                if c1 <= c0:
+                    continue
+                rows = np.arange(r0, r1)[:, None]
+                xs = np.arange(c0, c1)[None, :]
+                sub = idx[r0:r1, c0:c1]
+                cone = (np.abs(xs - hx) < (rows - hy) * 0.42 + 0.5) & ((sub % L) < L - 1)
+                sub += cone
         pal = self.pal
         g = pal.__getitem__
         Lr = idx.tolist()
         for y in range(self.h):
             s.pt[y] = list(map(g, Lr[2 * y]))
             s.pb[y] = list(map(g, Lr[2 * y + 1]))
+        self.occ_item = self.occ.item
+        pm = getattr(self, "pud_mask", None)
         for hx, hy, inten in heads:
             col = blend((60, 50, 40), (255, 236, 200), inten)
             s.pixel_rect(hx - 2, hy - 1, 6, 2, col)
             s.pixel_rect(hx - 1, hy - 2, 4, 1, (30, 30, 40))
+            # the lamp glints in nearby puddles
+            if pm is not None and 0 <= hx < self.w:
+                g0, pud = pm
+                ry = int(2 * self.r_bot[hx] - hy) - g0
+                for dx in (-1, 0, 1, 2):
+                    for dy in (0, 1, 2):
+                        yy, xx = ry + dy, hx + dx
+                        if 0 <= yy < pud.shape[0] and 0 <= xx < self.w and pud[yy, xx]:
+                            s.pixel(xx, yy + g0, blend(col, (120, 140, 200), 0.25 + dy * 0.2))
         self.draw_stickers(s, now, dt)
+        self.street(s, now, dt)
         for p in active:
             self.draw_can(s, p, now, dt)
         self.step_spray(s, dt)
@@ -789,18 +1124,294 @@ class Mode:
                 heads.append((int(q[0]), int(q[1]), self.lamp_level(k, self.last, DATA.beat)))
         return heads
 
+    # ------------------------------------------------------------ street life
+    def spx(self, s, x, py, col, z):
+        x, py = int(x), int(py)
+        if 0 <= x < self.w and 0 <= py < self.ph and self.occ_item(py, x) > z:
+            if py & 1:
+                s.pb[py >> 1][x] = col
+            else:
+                s.pt[py >> 1][x] = col
+
+    def sprite(self, s, art, cmap, x0, y0, z, light, sc=1, flip=False, emissive="E"):
+        w = len(art[0])
+        for j, row in enumerate(art):
+            for i, ch in enumerate(row):
+                c = cmap.get(ch)
+                if c is None:
+                    continue
+                if ch not in emissive:
+                    c = (min(255, int(c[0] * light)), min(255, int(c[1] * light)), min(255, int(c[2] * light)))
+                ii = (w - 1 - i) if flip else i
+                for a in range(sc):
+                    for b in range(sc):
+                        self.spx(s, x0 + ii * sc + a, y0 + j * sc + b, c, z)
+
+    def scale_at(self, z, unit):
+        return max(1, int(round(self.f / z * unit)))
+
+    def street(self, s, now, dt):
+        self.step_cams(s, now, dt)
+        self.step_flocks(s, now, dt)
+        self.step_cat(s, now, dt)
+        self.step_rider(s, now, dt)
+
+    # -- the ctOS camera pole that DedSec takes over
+    def step_cams(self, s, now, dt):
+        while self.next_cam_u < self.camx + 200:
+            k = math.floor(self.next_cam_u / LAMP_SP)
+            u = k * LAMP_SP + LAMP_SP / 2 + 26
+            self.cams.append({"u": u, "state": "idle", "t": 0.0, "id": self.rng.randint(10, 99)})
+            self.next_cam_u = u + self.rng.uniform(150, 230)
+        self.cams = [c for c in self.cams if c["u"] > self.camx - 60]
+        z = ZW - 12.5
+        for c in self.cams:
+            base = self.wall_to_screen(c["u"], 0, z)
+            top = self.wall_to_screen(c["u"], 27, z)
+            if not base or not top or not (-20 < base[0] < self.w + 20):
+                continue
+            if c["state"] == "idle" and self.w * 0.3 < top[0] < self.w * 0.7:
+                c["state"], c["t"] = "hack", now
+            if c["state"] == "hack" and now - c["t"] > 3.2:
+                c["state"], c["t"] = "owned", now
+            lt = self.light_at(c["u"])
+            pc = (int(40 * lt), int(42 * lt), int(52 * lt))
+            pw = self.scale_at(top[2], 0.5)
+            x = int(base[0])
+            for py in range(int(top[1]), int(base[1]) + 1):
+                for a in range(pw):
+                    self.spx(s, x + a, py, pc, z)
+            sc = self.scale_at(top[2], 0.8)
+            art = CAM_HEAD
+            hx, hy = x + pw - sc, int(top[1]) - 2 * sc
+            if c["state"] == "owned":       # hacked cameras droop toward the pavement
+                art = [CAM_HEAD[1], CAM_HEAD[0], CAM_HEAD[2], CAM_HEAD[3]]
+                hy += sc
+            self.sprite(s, art, CAM_COL, hx, hy, z, lt, sc)
+            if c["state"] == "owned":
+                led = GREEN
+            elif c["state"] == "hack":
+                led = (255, 40, 40) if int(now * 8) % 2 else (255, 200, 40)
+            else:
+                led = (255, 40, 40) if int(now * 2) % 3 else (90, 10, 10)
+            for a in range(sc):
+                for b in range(sc):
+                    self.spx(s, hx + a, hy + sc + b, led, 0)
+            # glow halo
+            if c["state"] != "idle" or int(now * 2) % 3:
+                gl = blend(led, BLACK, 0.55)
+                for dx, dy in ((-1, 0), (sc, 0), (0, -1), (0, sc)):
+                    self.spx(s, hx + dx, hy + sc + dy, gl, 0)
+            if c["state"] == "hack":
+                self.hack_fx(s, now, c, hx, hy, sc)
+                pct = min(99, int((now - c["t"]) / 3.2 * 100))
+                self.cam_status = ("ctOS CAM %02d: BREACH %2d%%" % (c["id"], pct), YELLOW)
+            elif c["state"] == "owned":
+                age = now - c["t"]
+                if age < 2.5:
+                    self.label(s, hx // 1 - 3, (hy // 2) - 2, "OWNED", GREEN)
+                self.cam_status = ("ctOS CAM %02d: OURS" % c["id"], GREEN)
+            else:
+                self.cam_status = ("ctOS CAM %02d: WATCHING" % c["id"], (255, 70, 70))
+
+    def hack_fx(self, s, now, c, hx, hy, sc):
+        age = now - c["t"]
+        # targeting brackets snap in around the camera head
+        k = 1 - ease_out(min(1, age / 0.4))
+        pad_ = int(3 + k * 10)
+        x0, y0 = hx - pad_, hy - pad_
+        x1, y1 = hx + 7 * sc + pad_, hy + 4 * sc + pad_
+        col = blend(CYAN, WHITE, k)
+        for d in range(4):
+            for (ax, ay, sx, sy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+                self.spx(s, ax + d * sx, ay, col, 0)
+                self.spx(s, ax, ay + d * sy, col, 0)
+        # data packets ride a link from the bottom-left (our phone) to the camera
+        sx_, sy_ = 6, self.ph - 4
+        tx, ty = hx + 3 * sc, hy + sc
+        for i in range(14):
+            f = (i / 14 + age * 0.9) % 1.0
+            px = sx_ + (tx - sx_) * f
+            py = sy_ + (ty - sy_) * f - math.sin(f * math.pi) * self.ph * 0.18
+            self.spx(s, px, py, blend(CYAN, PINK, f) if i % 3 else WHITE, 0)
+        pct = min(99, int(age / 3.2 * 100))
+        self.label(s, x0, (y1 >> 1) + 1, "HACK %2d%%" % pct, CYAN)
+
+    def label(self, s, x, y, txt, col):
+        if not 0 <= y < s.h:
+            return
+        for i, ch in enumerate(txt):
+            xx = x + i
+            if 0 <= xx < s.w:
+                s.put(xx, y, ch, col)
+                s.set_bg(xx, y, blend(s.pt[y][xx] or (10, 6, 20), BLACK, 0.55))
+
+    # -- pigeons pecking on the pavement; they scatter when something passes
+    def step_flocks(self, s, now, dt):
+        if len(self.flocks) < 2 and self.rng.random() < dt * 0.3:
+            u = self.camx + self.rng.uniform(60, 110)
+            birds = []
+            for _ in range(self.rng.randint(3, 6)):
+                birds.append({"u": u + self.rng.uniform(-5, 5), "z": ZW - self.rng.uniform(3, 9), "v": 0.0,
+                              "vu": 0.0, "vv": 0.0, "ph": self.rng.uniform(0, 6), "fly": False,
+                              "dir": self.rng.choice((-1, 1))})
+            self.flocks.append(birds)
+        threats = []
+        if self.cat:
+            threats.append(self.cat["u"])
+        if self.rider:
+            threats.append(self.rider["u"])
+        keep = []
+        for birds in self.flocks:
+            alive = []
+            for b in birds:
+                if not b["fly"] and (any(abs(t - b["u"]) < 9 for t in threats) or self.rng.random() < dt * 0.01):
+                    b["fly"] = True
+                    b["vu"] = self.rng.uniform(4, 10) * self.rng.choice((-1, 1))
+                    b["vv"] = self.rng.uniform(7, 11)
+                    b["dir"] = 1 if b["vu"] > 0 else -1
+                if b["fly"]:
+                    b["u"] += b["vu"] * dt
+                    b["v"] += b["vv"] * dt
+                    b["z"] -= 3 * dt
+                    if b["v"] > 60:
+                        continue
+                elif self.rng.random() < dt * 0.5:
+                    b["u"] += b["dir"] * 0.4
+                q = self.wall_to_screen(b["u"], b["v"], b["z"])
+                if q is None or q[0] < -30:
+                    continue
+                if q[0] < self.w + 10:
+                    if b["fly"]:
+                        art = PIGEON["fly1" if int(now * 10 + b["ph"]) % 2 else "fly2"]
+                    else:
+                        art = PIGEON["peck" if math.sin(now * 3.1 + b["ph"]) > 0.55 else "stand"]
+                    sc = self.scale_at(q[2], 0.42)
+                    self.sprite(s, art, PIGEON_COL, int(q[0]) - 2 * sc, int(q[1]) - len(art) * sc, b["z"],
+                                self.light_at(b["u"]), sc, flip=b["dir"] > 0)
+                alive.append(b)
+            if alive:
+                keep.append(alive)
+        self.flocks = keep
+
+    # -- a ginger cat strolling along the wall
+    def step_cat(self, s, now, dt):
+        if self.cat is None:
+            if now > self.next_cat:
+                self.cat = {"u": self.camx + 95, "z": ZW - 3.5, "pause": None}
+            return
+        c = self.cat
+        if c["pause"] is None and self.rng.random() < dt * 0.06:
+            c["pause"] = now
+        walking = c["pause"] is None or now - c["pause"] > 2.2
+        if c["pause"] is not None and now - c["pause"] > 2.2:
+            c["pause"] = -1e9 if c["pause"] > 0 else c["pause"]
+        if walking:
+            c["u"] -= 3.2 * dt
+        q = self.wall_to_screen(c["u"], 0, c["z"])
+        if q is None or q[0] < -40:
+            self.cat = None
+            self.next_cat = now + self.rng.uniform(14, 26)
+            return
+        sc = self.scale_at(q[2], 0.42)
+        art = (CAT_A if int(now * 6) % 2 else CAT_B) if walking else CAT_A[:6] + ["..XX.....XX...", "..XX.....XX..."]
+        self.sprite(s, art, CAT_COL, int(q[0]), int(q[1]) - len(art) * sc, c["z"], self.light_at(c["u"]), sc)
+
+    # -- a skater or a cyclist rolling by on the road, close to the camera
+    def step_rider(self, s, now, dt):
+        if self.rider is None:
+            if now > self.next_rider:
+                kind = self.rng.choice(("skate", "bike"))
+                self.rider = {"kind": kind, "u": self.camx - 40, "z": self.rng.uniform(31, 37),
+                              "spd": self.rng.uniform(17, 23) if kind == "skate" else self.rng.uniform(22, 28)}
+            return
+        r = self.rider
+        r["u"] += r["spd"] * dt
+        q = self.wall_to_screen(r["u"], 0, r["z"])
+        if q is None or q[0] > self.w + 60:
+            self.rider = None
+            self.next_rider = now + self.rng.uniform(9, 18)
+            return
+        lt = max(0.75, self.light_at(r["u"]))
+        if r["kind"] == "skate":
+            sc = self.scale_at(q[2], 0.45)
+            bob = int(math.sin(now * 5) * 0.6 + 0.5)
+            art = SKATER
+            if int(now * 8) % 2:
+                art = SKATER[:-1] + [".W.W....W.W."]
+            self.sprite(s, art, SKATER_COL, int(q[0]) - 6 * sc, int(q[1]) - len(art) * sc - bob, r["z"], lt, sc)
+        else:
+            self.draw_bike(s, now, r, lt)
+
+    def draw_bike(self, s, now, r, lt):
+        u, z = r["u"], r["z"]
+
+        def P(du, dv):
+            q = self.wall_to_screen(u + du, dv, z)
+            return (q[0], q[1]) if q else (0, 0)
+
+        def ln(a, b, col, thick=1):
+            for x, y in line_points(int(a[0]), int(a[1]), int(b[0]), int(b[1])):
+                for t in range(thick):
+                    self.spx(s, x + t, y, col, z)
+
+        sh = lambda c: (min(255, int(c[0] * lt)), min(255, int(c[1] * lt)), min(255, int(c[2] * lt)))
+        frame, tyre, body, skin = sh((0, 190, 220)), sh((30, 30, 36)), sh((60, 50, 70)), sh((200, 150, 116))
+        rad = 2.3
+        q = self.wall_to_screen(u, 0, z)
+        rp = rad * self.f / q[2]
+        rot = u / rad
+        for hub in (-3.3, 3.3):
+            cx, cy = P(hub, rad)
+            n = max(16, int(rp * 7))
+            for i in range(n):
+                a = i / n * math.tau
+                self.spx(s, cx + math.cos(a) * rp, cy + math.sin(a) * rp, tyre, z)
+            for k in range(3):
+                a = rot + k * math.pi / 3
+                ln((cx - math.cos(a) * rp, cy + math.sin(a) * rp), (cx + math.cos(a) * rp, cy - math.sin(a) * rp),
+                   sh((120, 120, 130)))
+        bb, rear, front = P(0, 2.0), P(-3.3, rad), P(3.3, rad)
+        seat, head = P(-1.1, 5.6), P(2.5, 5.9)
+        bar = P(2.3, 7.0)
+        for a, b in ((rear, bb), (bb, seat), (seat, head), (bb, head), (rear, seat), (head, front), (head, bar)):
+            ln(a, b, frame)
+        # rider
+        hip, sho = P(-1.0, 6.6), P(1.0, 10.6)
+        hq = P(1.5, 12.0)
+        thick = max(2, int(rp * 0.55))
+        ln(hip, sho, body, thick)
+        ln(sho, bar, body)
+        hr = max(1.0, rp * 0.42)
+        s_ = self.f / q[2]
+        for dy in range(-int(hr) - 1, int(hr) + 2):
+            for dx in range(-int(hr) - 1, int(hr) + 2):
+                if dx * dx + dy * dy <= hr * hr + 0.5:
+                    self.spx(s, hq[0] + dx, hq[1] + dy, body if dx < 0 or dy < -hr * 0.3 else skin, z)
+        self.spx(s, hq[0] + hr * 0.4, hq[1] - hr - 1, sh(PINK), z)
+        ph_ = now * 7
+        for side in (0, math.pi):
+            a = ph_ + side
+            pedal = (bb[0] + math.cos(a) * 1.1 * s_, bb[1] + math.sin(a) * 1.1 * s_)
+            knee = ((hip[0] + pedal[0]) / 2 + 1.6 * s_, (hip[1] + pedal[1]) / 2 - 0.6 * s_)
+            col = body if side == 0 else blend(body, BLACK, 0.4)
+            ln(hip, knee, col, 2 if thick > 2 else 1)
+            ln(knee, pedal, col)
+        self.spx(s, front[0] + rp, front[1] - rp * 0.6, (255, 250, 200), 0)   # headlight
+        for k in range(1, 6):
+            self.spx(s, front[0] + rp + k * 2, front[1] - rp * 0.6, blend((255, 250, 200), BLACK, k / 6), 0)
+
     # ------------------------------------------------------------ sprays & cans
     def draw_can(self, s, p, now, dt):
         if p.li >= len(p.layers):
             return
         lay = p.layers[p.li]
         pos = lay.can_pos()
-        cid = lay.ids if np.isscalar(lay.ids) or getattr(lay.ids, "ndim", 0) == 0 else None
-        col = COLS[int(cid)][0] if cid is not None else p.color
+        col = COLS[lay.cid][0] if lay.cid is not None else p.color
         if pos is None:
             # stencil: card + random fog
-            q0 = self.wall_to_screen(p.u0 - 1, (CH - p.v0) / R + 1)
-            q1 = self.wall_to_screen(p.u0 + p.width_units + 1, (CH - p.v0 - p.h) / R - 1)
+            q0 = self.wall_to_screen(p.u0 - 1, (CH - 1 - p.v0) / R + 1)
+            q1 = self.wall_to_screen(p.u0 + p.width_units + 1, (CH - 1 - p.v0 - p.h) / R - 1)
             if q0 and q1:
                 x0, y0, x1, y1 = int(q0[0]), int(q0[1]), int(q1[0]), int(q1[1])
                 card = (150, 120, 80)
@@ -816,8 +1427,11 @@ class Mode:
                     self.spray.append([x, y, random.uniform(-6, 6), random.uniform(-6, 6), 0.0, 0.5, blend(col, BLACK, 0.3)])
             return
         cx, cy = pos
+        if lay.ids is not None:
+            i = min(lay.n - 1, lay.i)
+            col = COLS[int(lay.ids[i])][0]
         u = p.u0 + cx / R
-        v = (CH - p.v0 - cy) / R
+        v = (CH - 1 - p.v0 - cy) / R
         q = self.wall_to_screen(u, v)
         if not q:
             return
@@ -827,13 +1441,14 @@ class Mode:
             sp = random.uniform(4, 22)
             self.spray.append([x, y, math.cos(a) * sp, math.sin(a) * sp, 0.0, random.uniform(0.15, 0.45),
                                blend(col, WHITE, random.uniform(0, 0.3))])
-        # overspray specks into canvas
-        if random.random() < 0.6:
-            ox = int(cx + random.gauss(0, 4))
-            oy = int(cy + random.gauss(0, 4))
-            cvv = CH - 1 - (p.v0 + oy)
-            if 0 <= cvv < CH and cid is not None:
-                self.canvas[cvv, (int(p.u0 * R) + ox) % CW] = int(cid)
+        # overspray specks just outside the piece
+        if random.random() < 0.35:
+            ox = int(cx + random.gauss(0, 5))
+            oy = int(cy + random.gauss(0, 5))
+            cvv = p.v0 + oy
+            if 0 <= cvv < CH and 0 <= oy < p.h and 0 <= ox < p.w and not p.fillmask[oy, ox]:
+                cc = paint(col)
+                self.canvas[cvv, (int(p.u0 * R) + ox) % CW] = cc
         # the can (pixels), held a bit in front / right of the spray point
         bx, by = int(x + 4), int(y - 1)
         s.pixel_rect(bx, by, 3, 7, (170, 170, 180))
@@ -851,8 +1466,9 @@ class Mode:
                 continue
             sp[0] += sp[2] * dt
             sp[1] += sp[3] * dt
-            t = sp[4] / sp[5]
-            s.pixel(int(sp[0]), int(sp[1]), blend(sp[6], BLACK, t * 0.8))
+            k = 1 - sp[4] / sp[5] * 0.8
+            c = sp[6]
+            s.pixel(int(sp[0]), int(sp[1]), (int(c[0] * k), int(c[1] * k), int(c[2] * k)))
             alive.append(sp)
         self.spray = alive[-400:]
 
@@ -860,6 +1476,14 @@ class Mode:
         art, cmap = random.choice(STICKERS)
         u = self.camx + random.uniform(10, 110)
         v = random.uniform(5, WH - 8)
+        # never slap over a piece: the lettering has to stay readable
+        c0, r0 = int(u * R), CH - 1 - int(v * R)
+        cols = np.arange(c0 - 2, c0 + len(art[0]) + 2) % CW
+        if self.canvas[max(0, r0 - 2):r0 + len(art) + 2][:, cols].any():
+            return
+        for p in self.pieces:
+            if p.u0 - 4 < u < p.u0 + p.width_units + 2:
+                return
         self.stickers.append({"art": art, "cmap": cmap, "u": u, "v": v, "t": now})
 
     def draw_stickers(self, s, now, dt):
@@ -869,7 +1493,6 @@ class Mode:
             art = st["art"]
             hh, ww = len(art), len(art[0])
             if age >= 0.28:
-                # commit to canvas (1 cell = 1 sticker pixel)
                 c0 = int(st["u"] * R)
                 r0 = CH - 1 - int(st["v"] * R)
                 for j, row in enumerate(art):
@@ -912,8 +1535,12 @@ class Mode:
             for k, ch in enumerate(t):
                 s.put(x + k, y + i, ch, c)
                 s.set_bg(x + k, y + i, (10, 4, 18))
-        cam = "ctOS CAM: " + ("OFFLINE" if int(now * 2) % 2 else "OFFLINE ●")
-        s.text(s.w - len("ctOS CAM: OFFLINE ●") - 2, 1, cam, GREEN if int(now) % 2 else YELLOW)
+        cam, col = self.cam_status
+        cam += " ●" if int(now * 2) % 2 else "  "
+        cx = s.w - len(cam) - 2
+        for k, ch in enumerate(cam):
+            s.put(cx + k, 1, ch, col)
+            s.set_bg(cx + k, 1, (10, 4, 18))
         if s.h > 30:
             msg = "#HACKTHEPLANET"
             s.text(s.w - len(msg) - 2, s.h - 2, msg, blend(PINK, YELLOW, beat))

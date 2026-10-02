@@ -25,7 +25,7 @@ LAND, BUILD, BLOCK2, MINOR, MAJOR, MARKET, PARK, PATH, WATER, WATER2, COAST, BRI
 ROOF, ROOF_LIGHT, TREES, LANE, PAPER = range(17, 22)
 
 NIGHT = {
-    LAND: (16, 18, 32), BUILD: (34, 38, 64), BLOCK2: (24, 26, 46), MINOR: (62, 68, 104),
+    LAND: (16, 18, 32), BUILD: (34, 38, 64), BLOCK2: (24, 26, 46), MINOR: (36, 40, 62),
     MAJOR: (0, 140, 165), MARKET: (220, 40, 130), PARK: (14, 66, 40), PATH: (40, 112, 62),
     WATER: (6, 22, 66), WATER2: (14, 40, 100), COAST: (0, 210, 240), BRIDGE: (255, 140, 20),
     TR_G: (57, 230, 60), TR_O: (255, 150, 0), TR_R: (255, 30, 60), PIER: (70, 60, 50), VOID: (30, 0, 50),
@@ -36,9 +36,9 @@ HACKED = {
     WATER: (24, 0, 48), WATER2: (60, 0, 90), COAST: (255, 15, 123), BRIDGE: (0, 229, 255),
     TR_G: (0, 229, 255), TR_O: (245, 230, 10), TR_R: (255, 15, 123), PIER: (60, 0, 60), VOID: (0, 0, 0),
 }
-NIGHT.update({ROOF: (49,53,78), ROOF_LIGHT: (76,79,100), TREES: (24,94,53),
+NIGHT.update({ROOF: (38,42,67), ROOF_LIGHT: (48,52,76), TREES: (24,94,53),
               LANE: (121,139,169), PAPER: (24,27,43)})
-HACKED.update({ROOF: (58,5,47), ROOF_LIGHT: (83,17,66), TREES: (49,10,79),
+HACKED.update({ROOF: (45,4,39), ROOF_LIGHT: (56,9,47), TREES: (49,10,79),
                LANE: (255,85,166), PAPER: (18,2,24)})
 FOG_N = (54, 16, 78)
 FOG_H = (90, 0, 50)
@@ -60,6 +60,11 @@ QUERIES = [
     ("where did i park", ["HERE?", "MAYBE HERE", "DEFINITELY NOT", "IMPOUND LOT"]),
     ("is blume watching me", ["YES", "ALSO YES", "BLUME HQ", "CAMERA #4471"]),
     ("free wifi no tracking", ["LOL", "DEDSEC NODE", "OPEN NET", "LIBRARY"]),
+    ("emotional support burrito", ["BURRITO HUG", "FOIL & FEELS", "GUAC THERAPY", "EXTRA CHEESE"]),
+    ("why is my car in a tree", ["HACKED, SORRY", "TOW TREE", "BRANCH OFFICE", "ARBORIST"]),
+    ("dog that looks like me", ["PUG PARLOR", "MIRROR MUTT", "DOPPELDOGGER", "SHELTER"]),
+    ("sunset spot no tourists", ["TWIN PEAKS", "LOL NO", "ROOFTOP 9", "PIER 7"]),
+    ("24h laundromat w/ arcade", ["SPIN CYCLE", "WASH & BASH", "SUDS'N'SCORE", "LINT LAB"]),
 ]
 STREETS = ["MARKET ST", "MISSION ST", "VALENCIA ST", "VAN NESS AVE", "LOMBARD ST", "HWY 101", "BAY BRIDGE",
            "GEARY BLVD", "DIVISADERO", "EMBARCADERO"]
@@ -67,6 +72,30 @@ NEWS = ["#NUDLE Maps now 3% less creepy", "Traffic heavy on HWY 101, as always",
         "New: Street View for your fridge", "Reroute: Lombard St still curvy",
         "Nudle CEO: 'we only know where you are'", "#BLUME partners with Nudle for 'safety'",
         "Bay Bridge: 14 min delay", "Report a pothole, win a pothole"]
+
+# downtown clusters (texel coords) whose blocks are extruded into 3D towers
+DOWNTOWNS = [(T * 0.30, T * 0.36, "FINANCIAL DIST"), (T * 0.78, T * 0.82, "DOWNTOWN"), (T * 0.08, T * 0.70, "MID-MARKET")]
+
+SKULL_BIG = [
+    "......XXXXXXXXXX......",
+    "....XXXXXXXXXXXXXX....",
+    "...XXXXXXXXXXXXXXXX...",
+    "..XXXXXXXXXXXXXXXXXX..",
+    ".XXXXXXXXXXXXXXXXXXXX.",
+    ".XXXX.X...XX...X.XXXX.",
+    ".XXXXX.X.XXXX.X.XXXXX.",
+    ".XXXX.X...XX...X.XXXX.",
+    ".XXXXXXXXX..XXXXXXXXX.",
+    "..XXXXXXXX..XXXXXXXX..",
+    "...XXXXXX....XXXXXX...",
+    "....XXXXXXXXXXXXXX....",
+    ".....X.X.X.X.X.X.X....",
+    ".....XXXXXXXXXXXXX....",
+    "......XXXXXXXXXXX.....",
+]
+
+ETA_NOTES = ["2 CAMERAS ON ROUTE", "TOLL: YOUR DATA", "SCENIC (MORE ADS)", "AVOIDS 1 POTHOLE",
+             "BLUME-SPONSORED ROUTE", "FASTEST-ISH", "VIA 4 COFFEE SHOPS", "0 PARKING EXPECTED"]
 
 SKULL_PX = ["..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", "XX..X..XX", "XX..X..XX", "XXXXXXXXX",
             ".XXX.XXX.", "..X.X.X..", "..XXXXX.."]
@@ -179,9 +208,10 @@ class Mode:
         self.rowsP = np.arange(self.ph)[:, None]
         self.skyline = self.make_skyline()
         self.offset_new = None
+        self.buildings = self.make_buildings()
         # labels
         rng = random.Random(7)
-        self.labels = []
+        self.labels = [(int(cx), int(cz), nm) for cx, cz, nm in DOWNTOWNS]
         names = DISTRICTS[:]
         rng.shuffle(names)
         for i, nm in enumerate(names * 2):
@@ -206,6 +236,41 @@ class Mode:
         random.shuffle(self.phase_q)
         self.cycle = 0
         self.new_cycle(self.last)
+
+    def make_buildings(self):
+        """Footprints + heights for the extruded downtown blocks (texel coordinates)."""
+        out = []
+        rng = random.Random(11)
+        nb = T // S
+        for bx in range(nb):
+            for bz in range(nb):
+                cx, cz = bx * S + S / 2, bz * S + S / 2
+                best = 0.0
+                for dx_, dz_, _ in DOWNTOWNS:
+                    d = math.hypot(_wrap(cx - dx_), _wrap(cz - dz_))
+                    best = max(best, 1 - d / 105)
+                if best <= 0:
+                    continue
+                h = (bx * 73856093 ^ bz * 19349663) & 0xFFFF
+                if h % 11 == 0 or (3 <= bx <= 6 and 10 <= bz <= 11):
+                    continue
+                if abs(_wrap(cx - cz)) < 17:          # Market St diagonal cuts the block
+                    continue
+                corners = [(int(cx + a) % T, int(cz + b) % T) for a in (-7, 7) for b in (-7, 7)]
+                if not all(self.land[z, x] for x, z in corners):
+                    continue
+                x0, z0 = bx * S + 4, bz * S + 4
+                if rng.random() < 0.35:
+                    parts = [(x0, z0, 12, 5.5), (x0, z0 + 6.5, 12, 5.5)]
+                else:
+                    parts = [(x0, z0, 12, 12)]
+                for px, pz, w, d in parts:
+                    hg = 10 + 52 * best ** 1.1 * rng.uniform(0.5, 1.0)
+                    if rng.random() < 0.12 * best:
+                        hg = min(70.0, hg * 1.35)      # the odd skyscraper
+                    seed = rng.randrange(1 << 16)
+                    out.append((px, pz, w, d, hg, seed))
+        return out
 
     def make_skyline(self):
         n = 1440
@@ -268,7 +333,8 @@ class Mode:
         qi = self.phase_q[self.cycle % len(self.phase_q)]
         self.query, self.results = QUERIES[qi]
         self.q_start = now + 0.6
-        self.q_done = self.q_start + len(self.query) / 14.0 + 0.6
+        self.keys = self.keystrokes(self.query)
+        self.q_done = self.q_start + self.keys[-1][0] + 0.6
         self.pins_at = self.q_done + 0.2
         self.route_at = self.pins_at + 1.8
         self.cycle_end = self.route_at + 11.0
@@ -286,6 +352,41 @@ class Mode:
             self.pins_at += 3.0
             self.route_at += 3.0
             self.cycle_end += 3.0
+
+    @staticmethod
+    def keystrokes(q):
+        """[(t, text)] typing timeline with human rhythm and, often, one fat-fingered typo."""
+        out, t, typed = [(0.0, "")], 0.0, ""
+        typo = random.randrange(3, len(q)) if len(q) > 5 and random.random() < 0.7 else -1
+        near = "qwertyuiopasdfghjklzxcvbnm"
+        for i, ch in enumerate(q):
+            if i == typo and ch != " ":
+                t += random.uniform(0.04, 0.09)
+                typed += random.choice(near)
+                out.append((t, typed))
+                t += random.uniform(0.05, 0.1)
+                typed += random.choice(near)
+                out.append((t, typed))
+                t += 0.45                                  # notice it...
+                for _ in range(2):
+                    t += 0.08
+                    typed = typed[:-1]
+                    out.append((t, typed))
+            t += random.uniform(0.04, 0.11) + (0.18 if ch == " " and random.random() < 0.4 else 0)
+            typed += ch
+            out.append((t, typed))
+        return out
+
+    def typed_at(self, now):
+        if now <= self.q_start:
+            return ""
+        el = now - self.q_start
+        txt = ""
+        for t, s_ in self.keys:
+            if t > el:
+                break
+            txt = s_
+        return txt
 
     def drop_pins(self, now):
         # you-are-here near the camera, results further ahead
@@ -338,12 +439,16 @@ class Mode:
                 dense.append((ax + (bx - ax) * i / n, az + (bz - az) * i / n))
         dense.append(pts[-1])
         dist = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
+        dest = "DESTINATION"
         for p in self.pins:
             if p.kind == "poi" and abs(_wrap(p.wx - tx)) < 1 and abs(_wrap(p.wz - tz)) < 1:
                 p.kind = "dest"
+                dest = p.label
         self.route = {"pts": dense, "start": now, "draw": 1.4, "travel": 7.0, "dist": dist}
         self.eta = {"start": now + 1.4, "min": max(2, int(dist / 22)), "mi": dist / 150,
-                    "via": random.choice(STREETS), "end": (ex, ez)}
+                    "via": random.choice(STREETS), "end": (ex, ez), "dest": dest,
+                    "traffic": random.choice((("LIGHT", GREEN), ("MEH", YELLOW), ("UGH", (255, 60, 60)))),
+                    "note": random.choice(ETA_NOTES)}
 
     # ------------------------------------------------------------ map raster
     def raster(self, s, now, hacked):
@@ -402,7 +507,7 @@ class Mode:
         ui = (U + T * 4096).astype(np.int64) % T
         vi = (V + T * 4096).astype(np.int64) % T
         base = self.tex[vi, ui]
-        base = np.where(t > 260, self.texmid[vi, ui], base)
+        base = np.where(t > 190, self.texmid[vi, ui], base)
         base = np.where(t > 480, self.texfar[vi, ui], base)
         fogd = 820.0
         fog = np.clip(t * (F / fogd), 0, F - 1).astype(np.int16)
@@ -423,24 +528,42 @@ class Mode:
         win = sil & (((rows * 7 + ang * 3) % 23) == 0)
         idx = np.where(sil, SKY0 + SKYN, idx)
         idx = np.where(win, SKY0 + SKYN + 1, idx)
-        pal = self.palette(now, hacked)
+        pal, palb = self.palette(now, hacked)
         L = idx.tolist()
         g = pal.__getitem__
-        gb = self._palb.__getitem__
+        gb = palb.__getitem__
         band = int((now * 5) % (self.h + 12)) - 6
         pt, pb = s.pt, s.pb
+        sweep = getattr(self, "sweep", None)
+        if sweep is not None:
+            # DedSec infection front: rows near the YOU pin turn first, the rest follow
+            npal, npalb = self.palette(now, False)
+            ng, ngb = npal.__getitem__, npalb.__getitem__
+            sy0, rad = sweep
         for y in range(self.top, self.h):
-            gg = gb if band <= y <= band + 1 else g
-            pt[y] = list(map(gg, L[2 * y]))
-            pb[y] = list(map(gg, L[2 * y + 1]))
+            for py in (2 * y, 2 * y + 1):
+                if sweep is not None and abs(py - sy0) > rad:
+                    gg = ngb if band <= y <= band + 1 else ng
+                elif sweep is not None and abs(py - sy0) > rad - 2:
+                    gg = (lambda i: WHITE) if py & 1 else (lambda i: PINK)
+                else:
+                    gg = gb if band <= y <= band + 1 else g
+                (pb if py & 1 else pt)[y] = list(map(gg, L[py]))
         self.pal = pal
 
     def palette(self, now, hacked):
         src = HACKED if hacked else NIGHT
         fogc = FOG_H if hacked else FOG_N
-        key = (hacked, int(now * 8))
-        if getattr(self, "_pkey", None) == key:
-            return self._pal
+        fq = int(self.fold * 12)
+        key = (hacked, int(now * 8), fq)
+        cache = self.__dict__.setdefault("_pcache", {})
+        if key in cache:
+            return cache[key]
+        if len(cache) > 6:
+            cache.clear()
+        # folded panel lighting: brightest when it faces the camera, dim as it tips over
+        th = fq / 12.0
+        lit = 0.62 + 0.5 * math.sin(min(math.pi, th + 0.35))
         pal = [None] * (SKY0 + SKYN + 2)
         for b in range(NB):
             col = src[b]
@@ -452,23 +575,147 @@ class Mode:
             elif b == COAST:
                 col = blend(col, WHITE, 0.25 * pulse(now, 2.2))
             for sh in range(SH):
-                c2 = blend(col, PURPLE if not hacked else PINK, 0.16) if sh else col
+                c2 = col
                 if sh:
-                    c2 = blend(c2, WHITE, 0.06)
+                    c2 = blend(col, PURPLE if not hacked else PINK, 0.12)
+                    c2 = tuple(min(255, int(v * lit)) for v in c2)
                 for fg in range(F):
-                    k = (fg / (F - 1)) ** 1.3 * 0.88
+                    k = (fg / (F - 1)) ** 1.3 * 0.88 * (0.7 if sh else 1.0)
                     pal[(b * SH + sh) * F + fg] = blend(c2, fogc, k)
         top = (6, 0, 16) if not hacked else (20, 0, 10)
         for i in range(SKYN):
             pal[SKY0 + i] = blend(top, blend(fogc, PINK, 0.25), (i / (SKYN - 1)) ** 1.6)
         pal[SKY0 + SKYN] = (26, 8, 44) if not hacked else (40, 0, 24)
         pal[SKY0 + SKYN + 1] = blend(YELLOW, PINK, 0.3) if not hacked else CYAN
-        self._pkey, self._pal = key, pal
-        self._palb = [blend(c, WHITE, 0.22) for c in pal]
-        return pal
+        palb = [blend(c, WHITE, 0.22) for c in pal]
+        cache[key] = (pal, palb)
+        return pal, palb
+
+    # ------------------------------------------------------------ 3D downtown
+    def fill_poly(self, s, pts, col):
+        """Convex polygon fill in pixel space using whole-row slice writes."""
+        ys = [p[1] for p in pts]
+        y0, y1 = max(self.top * 2, int(min(ys) + 0.5)), min(s.ph - 1, int(max(ys) + 0.5))
+        xs = [p[0] for p in pts]
+        if y1 < y0 or max(xs) < 0 or min(xs) >= s.w:
+            return
+        edges = []
+        for i, (ax, ay) in enumerate(pts):
+            bx, by = pts[i - 1]
+            if ay == by:
+                continue
+            if ay > by:
+                ax, ay, bx, by = bx, by, ax, ay
+            slope = (bx - ax) / (by - ay)
+            edges.append((ay, by, ax - ay * slope, slope))
+        cuts = sorted({y0, y1 + 1} | {max(y0, min(y1 + 1, math.ceil(y))) for y in ys})
+        w = s.w
+        for start, end in zip(cuts, cuts[1:]):
+            active = [(off + start * slope, slope) for ay, by, off, slope in edges if ay <= start < by]
+            if len(active) != 2:
+                continue
+            (lo, dl), (hi, dh) = sorted(active)
+            for py in range(start, end):
+                a, b = max(0, int(lo + 0.5)), min(w, int(hi + 0.5) + 1)
+                if b > a:
+                    (s.pb if py & 1 else s.pt)[py >> 1][a:b] = [col] * (b - a)
+                lo += dl
+                hi += dh
+
+    def draw_buildings(self, s, now, hacked):
+        if self.flip is not None:
+            return
+        ox, oz = self.offset
+        lim = s.w / self.f * 1.25
+        items = []
+        for bx, bz, bw, bd, hg, seed in self.buildings:
+            lx, lz = self.to_local(bx + bw / 2 - ox, bz + bd / 2 - oz)
+            if not 12 < lz < 470 or abs(lx) > lz * lim + 30:
+                continue
+            items.append((lz, bx, bz, bw, bd, hg, seed))
+        if not items:
+            return
+        items.sort(reverse=True)
+        c, sn = self.cy_, self.sy_
+        # light from a fixed world direction so facades change as the camera turns
+        lwx, lwz = 0.6, -0.8
+        if hacked:
+            wall, roof, edge = (52, 0, 44), (96, 8, 70), PINK
+        else:
+            wall, roof, edge = (66, 74, 136), (104, 112, 168), (150, 220, 245)
+        fogc = FOG_H if hacked else FOG_N
+        wins = ((255, 214, 120), (255, 236, 180), (120, 230, 255)) if not hacked else (PINK, CYAN, YELLOW)
+        flick = int(now * 2)
+        for lz, bx, bz, bw, bd, hg, seed in items:
+            fpt = [(bx - ox, bz - oz), (bx + bw - ox, bz - oz), (bx + bw - ox, bz + bd - oz), (bx - ox, bz + bd - oz)]
+            loc = [self.to_local(wx, wz) for wx, wz in fpt]
+            g = [self.proj(x, z, 0.0) for x, z in loc]
+            t = [self.proj(x, z, hg) for x, z in loc]
+            if None in g or None in t:
+                continue
+            # Reject projected buildings before facade/window/roof work.
+            projected = g + t
+            if (max(p[0] for p in projected) < 0 or min(p[0] for p in projected) >= s.w
+                    or max(p[1] for p in projected) < self.top * 2
+                    or min(p[1] for p in projected) >= s.ph):
+                continue
+            depth = g[0][2]
+            fk = min(0.88, (min(F - 1, depth * F / 820.0) / (F - 1)) ** 1.3 * 0.88)
+            for i in range(4):
+                j = (i + 1) % 4
+                ga, gb, ta, tb = g[i], g[j], t[i], t[j]
+                cross = (gb[0] - ga[0]) * (ta[1] - ga[1]) - (gb[1] - ga[1]) * (ta[0] - ga[0])
+                if cross >= 0:
+                    continue
+                # world-space outward normal of edge i (footprint is counter-clockwise)
+                ex, ez = fpt[j][0] - fpt[i][0], fpt[j][1] - fpt[i][1]
+                ln = math.hypot(ex, ez) or 1
+                nx, nz = ez / ln, -ex / ln
+                k = 0.55 + 0.45 * max(0.0, nx * lwx + nz * lwz)
+                col = blend(tuple(int(v * k) for v in wall), fogc, fk)
+                self.fill_poly(s, [(ga[0], ga[1]), (gb[0], gb[1]), (tb[0], tb[1]), (ta[0], ta[1])], col)
+                # window grid, interpolated across the projected facade
+                if depth < 330 and abs(gb[0] - ga[0]) > 2:
+                    cols_ = max(1, min(4, int(abs(gb[0] - ga[0]) / 2.5)))
+                    rows_ = max(1, min(12, int(hg / 5.5)))
+                    for r_ in range(rows_):
+                        v = (r_ + 0.6) / (rows_ + 0.4)
+                        for q in range(cols_):
+                            hsh = (seed * 31 + i * 7 + r_ * 13 + q * 5) & 63
+                            if hsh > 26 and not (hacked and (hsh + flick) % 5 == 0):
+                                continue
+                            u = (q + 0.5) / cols_
+                            x = ga[0] + (gb[0] - ga[0]) * u
+                            y0 = ga[1] + (gb[1] - ga[1]) * u
+                            y1 = ta[1] + (tb[1] - ta[1]) * u
+                            wc = wins[hsh % 3] if hsh % 9 else wins[2]
+                            s.pixel(int(x), int(y0 + (y1 - y0) * v), blend(blend(wc, BLACK, 0.25 + 0.3 * (hsh % 3) / 2), fogc, fk))
+            top = [(p[0], p[1]) for p in t]
+            self.fill_poly(s, top, blend(roof, fogc, fk))
+            ec = blend(edge, fogc, min(0.95, fk + 0.25))
+            for i in range(4):
+                a, b = top[i], top[(i + 1) % 4]
+                s.pixel_line(a[0], a[1], b[0], b[1], ec)
+            if hg > 52 and depth < 400:
+                # aviation light on the tall ones
+                cxp = sum(p[0] for p in top) / 4
+                cyp = min(p[1] for p in top) - 1
+                if int(now * 1.5 + seed) % 2:
+                    s.pixel(int(cxp), int(cyp), (255, 40, 60) if not hacked else CYAN)
 
     # ------------------------------------------------------------ overlays
-    def draw_pin(self, s, p, now, hacked):
+    def shadow(self, s, x, y, rx, k):
+        """Soft elliptical drop shadow: darkens whatever map pixels are under it."""
+        for py in (y - 1, y, y + 1):
+            if not 0 <= py < s.ph:
+                continue
+            row = (s.pb if py & 1 else s.pt)[py >> 1]
+            span = rx if py == y else rx * 0.6
+            for px in range(int(x - span), int(x + span) + 1):
+                if 0 <= px < s.w and row[px] is not None:
+                    row[px] = blend(row[px], BLACK, k * (0.8 if py == y else 0.5))
+
+    def draw_pin(self, s, p, now, hacked, order=0):
         age = now - p.born
         if age < 0:
             return
@@ -485,64 +732,90 @@ class Mode:
             if k <= 0:
                 return
             scale *= k
-        # drop with bounce
-        T0 = 0.45
+        # drop: fall, squash on impact, two decaying bounces
+        T0 = 0.42
+        squash = 0.0
         if age < T0:
             off = 70 * (1 - (age / T0) ** 2)
         else:
             u = age - T0
-            off = 10 * abs(math.sin(u * 8)) * math.exp(-u * 4.5)
+            off = 12 * abs(math.sin(u * 7.5)) * math.exp(-u * 4.0)
+            squash = max(0.0, 1 - u / 0.12) * 0.45
         x, y = int(sx), int(sy)
-        # shadow
-        sw = max(1, int((3 - min(2.5, off / 25)) * scale))
-        for dx in range(-sw, sw + 1):
-            s.pixel(x + dx, y, (0, 0, 0))
+        # shadow sharpens and darkens as the pin approaches the ground
+        near = 1 - min(1.0, off / 60)
+        self.shadow(s, sx, y, (1.5 + 2.2 * near) * scale + 0.5, 0.25 + 0.5 * near)
         if p.kind == "here":
             r = (now * 1.6) % 1
             s.pixel_circle(sx, sy, 2 + r * 7 * scale, blend(CYAN, BLACK, r), fill=False)
             s.pixel_circle(sx, sy, 2.2 * scale + 0.5, WHITE)
             s.pixel_circle(sx, sy, 1.5 * scale, (40, 130, 255))
+            if age < 3 and s.w > 100:
+                self.label(s, x - 3, y // 2 + 1, " YOU ", BLACK, bg=CYAN)
             return
         top = y - int(off)
         col = p.col
         if p.kind == "dest":
             col = blend(PINK, WHITE, 0.3 * pulse(now, 6))
-        if hacked:
-            sk = [r for r in SKULL_PX]
+        # hijack: each pin pops into a skull one after another
+        flip_at = self.hack_start + 0.35 + order * 0.22
+        if hacked and now >= flip_at:
+            pop = now - flip_at
+            if not getattr(p, "popped", False):
+                p.popped = True
+                self.particles.burst(sx, top / 2 - 2, 14, (PINK, WHITE, PURPLE), speed=9, chars="*+x.")
+            k = max(1, int(round(scale * (1.6 if pop < 0.18 else 1.0))))
+            sk = SKULL_PX
             hgt = len(sk)
-            k = max(1, int(round(scale)))
+            flash = pop < 0.12
             for j, row in enumerate(sk):
                 for i, ch in enumerate(row):
                     if ch == "X":
-                        for a in range(k):
-                            for b in range(k):
-                                s.pixel(x - 4 * k + i * k + a, top - (hgt - j) * k - 2 + b,
-                                        PINK if j < 3 else blend(PINK, WHITE, 0.5))
+                        c = WHITE if flash else (PINK if j < 3 else blend(PINK, WHITE, 0.45))
+                        for a_ in range(k):
+                            for b_ in range(k):
+                                s.pixel(x - 4 * k + i * k + a_, top - (hgt - j) * k - 2 + b_, c)
             s.pixel_line(x, top - 2, x, top, PINK)
+            if p.dying is None and s.w > 100 and pop > 0.3:
+                self.label(s, x - 3, (top - (hgt + 2) * k) // 2 - 1, " PWND ", BLACK, bg=PINK, avoid=True)
             return
+        if hacked:
+            p.popped = False
         r = 3.0 * scale
-        cy = top - r - 3 * scale
-        for k in range(int(3 * scale) + 1):
-            hw = int((1 - k / (3 * scale + 1)) * r * 0.75)
+        sq = 1 - squash
+        cy = top - (r + 3 * scale) * sq
+        for k in range(int(3 * scale * sq) + 1):
+            hw = int((1 - k / (3 * scale * sq + 1)) * r * 0.75)
             for dx in range(-hw, hw + 1):
                 s.pixel(x + dx, top - k, blend(col, BLACK, 0.25))
-        s.pixel_circle(sx+1, cy+1, r, blend(col, BLACK, .45))
-        s.pixel_circle(sx, cy, r, col)
-        s.pixel(int(sx)-1, int(cy)-1, blend(col, WHITE, .65))
+        rw = r * (1 + squash * 0.5)
+        for py in range(int(cy - r * sq), int(cy + r * sq) + 1):
+            dy = (py - cy) / max(0.5, r * sq)
+            if abs(dy) > 1:
+                continue
+            span = rw * math.sqrt(1 - dy * dy)
+            for px in range(int(sx - span), int(sx + span) + 1):
+                s.pixel(px, py, col if dy > -0.55 or px > sx - span * 0.3 else blend(col, WHITE, 0.35))
         s.pixel_circle(sx, cy, max(0.8, r * 0.38), WHITE)
-        # label
+        # label: solid tag in the pin colour, rating chip next to it
         if age > 0.6 and p.dying is None:
             ly = int(cy - r) // 2 - 1
-            lab = p.label if p.kind != "dest" else "> " + p.label
+            lab = " " + p.label + " "
+            if p.kind == "dest":
+                lab = " > " + p.label + " "
             if ly > self.top:
                 lx0 = x - len(lab) // 2
-                self.label(s, lx0, ly, lab, WHITE if p.kind == "dest" else col, avoid=p.kind != "dest")
-                if p.kind == "dest" or (age < 3 and s.w > 120):
-                    rt = p.rating + "/5"
-                    self.label(s, x - len(rt) // 2, ly - 1 if ly - 1 > self.top else ly + 1, rt, YELLOW,
-                               avoid=p.kind != "dest")
+                if p.kind == "dest":
+                    self.label(s, lx0, ly, lab, BLACK, bg=blend(PINK, WHITE, 0.15))
+                else:
+                    self.label(s, lx0, ly, lab, BLACK, avoid=True, bg=blend(col, BLACK, 0.1))
+                if p.kind == "dest" or (age < 4 and s.w > 120):
+                    stars = int(float(p.rating) + 0.5)
+                    rt = "*" * stars + "." * (5 - stars) + " " + p.rating
+                    ry = ly - 1 if ly - 1 > self.top else ly + 1
+                    self.label(s, x - len(rt) // 2, ry, rt, YELLOW, avoid=p.kind != "dest")
 
-    def label(self, s, x, y, txt, col, avoid=False):
+    def label(self, s, x, y, txt, col, avoid=False, bg=None):
         if not (0 <= y < s.h):
             return
         r = (x - 1, y, len(txt) + 2, 1)
@@ -552,10 +825,14 @@ class Mode:
         for i, ch in enumerate(txt):
             xx = x + i
             if 0 <= xx < s.w:
-                under = s.pt[y][xx] or (0, 0, 0)
-                s.bg[y][xx] = blend(under, BLACK, 0.55)
+                if bg is not None:
+                    s.bg[y][xx] = bg
+                else:
+                    under = s.pt[y][xx] or (0, 0, 0)
+                    s.bg[y][xx] = blend(under, BLACK, 0.7)
                 s.ch[y][xx] = ch
                 s.fg[y][xx] = col
+                s.pt[y][xx] = s.pb[y][xx] = None
 
     def draw_route(self, s, now, hacked):
         rt = self.route
@@ -585,15 +862,59 @@ class Mode:
         if age < rt["draw"] and proj and proj[-1]:
             hx, hy, _ = proj[-1]
             self.particles.add(hx / 1.0, hy / 2, random.uniform(-4, 4), random.uniform(-2, 1), 0.4, "·", glow)
-        if 0 <= tprog <= 1.05 and dot_i < len(proj) and proj[dot_i]:
-            dx, dy, _ = proj[dot_i]
-            s.pixel_circle(dx, dy - 1, 3, blend(glow, WHITE, 0.5 * pulse(now, 10)))
-            s.pixel_circle(dx, dy - 1, 1.6, WHITE)
+        if 0 <= tprog <= 1.05 and proj:
+            f = max(0.0, min(1.0, tprog)) * (n - 1)
+            i0 = min(len(proj) - 1, int(f))
+            i1 = min(len(proj) - 1, i0 + 1)
+            a, b = proj[i0], proj[i1]
+            if a and b:
+                u = f - int(f)
+                cx, cy = a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                if abs(dx) < 1e-3 and abs(dy) < 1e-3 and i0 > 0 and proj[i0 - 1]:
+                    dx, dy = a[0] - proj[i0 - 1][0], a[1] - proj[i0 - 1][1]
+                self.draw_car_icon(s, cx, cy, dx, dy, now, hacked, glow)
         if tprog > 1.05 and not rt.get("arrived"):
             rt["arrived"] = True
             q = proj[-1] if proj else None
             if q:
                 self.particles.burst(q[0], q[1] / 2, 30, (PINK, YELLOW, CYAN, WHITE), speed=9)
+
+    def draw_car_icon(self, s, cx, cy, dx, dy, now, hacked, glow):
+        """Little top-down car riding the route, nose pointing along the segment."""
+        r = 4 + 1.5 * pulse(now, 6)
+        s.pixel_circle(cx, cy - 1, r, blend(glow, BLACK, 0.55), fill=False)
+        body = PINK if hacked else WHITE
+        roof = (20, 20, 30) if hacked else (40, 110, 230)
+        x, y = int(round(cx)), int(round(cy)) - 1
+        if abs(dx) >= abs(dy) * 1.4:          # moving sideways on screen
+            d = 1 if dx >= 0 else -1
+            for ox in range(-3, 4):
+                for oy in (-1, 0, 1):
+                    s.pixel(x + ox, y + oy, body)
+            for ox in (-1, 0):
+                s.pixel(x + ox * d, y - 1, roof)
+                s.pixel(x + ox * d, y, roof)
+            s.pixel(x + 3 * d, y - 1, YELLOW)
+            s.pixel(x + 3 * d, y + 1, YELLOW)
+            s.pixel(x - 3 * d, y - 1, (255, 40, 50))
+            s.pixel(x - 3 * d, y + 1, (255, 40, 50))
+            for ox in (-2, 2):
+                s.pixel(x + ox, y + 2, (10, 10, 14))
+        else:                                  # moving up / down the screen
+            d = 1 if dy >= 0 else -1
+            for ox in (-1, 0, 1):
+                for oy in range(-2, 3):
+                    s.pixel(x + ox, y + oy, body)
+            s.pixel(x, y - d, roof)
+            s.pixel(x, y, roof)
+            s.pixel(x - 1, y + 2 * d, YELLOW)
+            s.pixel(x + 1, y + 2 * d, YELLOW)
+            s.pixel(x - 1, y - 2 * d, (255, 40, 50))
+            s.pixel(x + 1, y - 2 * d, (255, 40, 50))
+            for oy in (-1, 1):
+                s.pixel(x - 2, y + oy, (10, 10, 14))
+                s.pixel(x + 2, y + oy, (10, 10, 14))
 
     def draw_eta(self, s, now, hacked):
         e = self.eta
@@ -602,34 +923,55 @@ class Mode:
         lx, lz = self.to_local(*e["end"])
         q = self.proj(lx, lz)
         k = ease_out((now - e["start"]) / 0.35)
-        cw = 24
-        ch_ = 6
+        cw = 28 if s.w >= 120 else 24
+        ch_ = 8 if s.h >= 34 else 6
         if q:
-            x = int(q[0]) + 4
-            y = int(q[1]) // 2 - ch_ - 2
+            x = int(q[0]) + 6
+            y = int(q[1]) // 2 - ch_ - 3
         else:
             x, y = s.w - cw - 2, self.top + 2
-        x = max(1, min(s.w - cw - 2, x))
-        y = max(self.top + 1, min(s.h - ch_ - 3, y))
-        w2 = max(4, int(cw * k))
+        if x + cw > s.w - 6 and q:
+            x = int(q[0]) - cw - 6
+        x = max(1, min(s.w - cw - 6, x))
+        y = max(self.top + 1, min(s.h - ch_ - 4, y))
         col = PINK if hacked else CYAN
-        s.box(x, y, w2, ch_, col, title=("NUDLE" if not hacked else "DEDSEC") if k >= 1 else None)
+        if q and k >= 1:
+            # leader line from the card to the destination
+            ax, ay = (x if q[0] < x else x + cw - 1), (y + ch_) * 2
+            s.pixel_line(ax, ay, int(q[0]), int(q[1]) - 8, blend(col, BLACK, 0.3))
+        w2 = max(4, int(cw * k))
+        s.box(x, y, w2, ch_, col, title=("NUDLE ROUTE" if not hacked else "DEDSEC ROUTE") if k >= 1 else None)
         if k < 1:
             return
         rt = self.route
         prog = max(0.0, min(1.0, (now - rt["start"] - rt["draw"]) / rt["travel"])) if rt else 0
         mins = max(0, int(round(e["min"] * (1 - prog))))
+        inner = cw - 4
         if hacked:
-            lines = [("ETA  ??? MIN", YELLOW), ("ROUTE BY #DEDSEC", PINK), ("ctOS CAN'T SEE YOU", WHITE)]
+            glitchy = "".join(random.choice("#%&") if random.random() < 0.2 else c for c in e["dest"])
+            lines = [("> " + glitchy, PINK), ("ETA ??? MIN  ?.? MI", YELLOW), ("ROUTE BY #DEDSEC", PINK),
+                     ("ctOS CAN'T SEE YOU", WHITE)]
         else:
-            lines = [("ETA %2d MIN  %.1f MI" % (mins, e["mi"] * (1 - prog)), WHITE),
-                     ("VIA " + e["via"], GREY), ("ARRIVING" if prog >= 1 else "TRAFFIC: " +
-                                                 random.Random(int(e["start"])).choice(("LIGHT", "MEH", "UGH")), YELLOW)]
-        for i, (t, c) in enumerate(lines):
-            s.text(x + 2, y + 1 + i, t[:cw - 4], c)
-        bw = cw - 4
-        fill = int(bw * prog)
-        s.text(x + 2, y + 4, "█" * fill + "░" * (bw - fill), col)
+            lt = time.localtime(now + mins * 60)
+            lines = [("> " + e["dest"], WHITE),
+                     ("%d MIN" % mins if prog < 1 else "ARRIVED", YELLOW),
+                     ("VIA " + e["via"], GREY),
+                     (e["note"], blend(CYAN, BLACK, 0.35))]
+        rows = ch_ - 3
+        for i, (t, c) in enumerate(lines[:rows]):
+            s.text(x + 2, y + 1 + i, t[:inner], c)
+        if not hacked:
+            dist = " %.1f MI  %02d:%02d" % (e["mi"] * (1 - prog), lt.tm_hour, lt.tm_min)
+            s.text(x + cw - 2 - len(dist), y + 2, dist, WHITE)
+            tr, tc = e["traffic"]
+            if ch_ >= 8 and cw >= 28:
+                s.text(x + cw - 2 - len(tr) - 2, y + 3, "● " + tr, tc)
+        bw = inner
+        fill = int((bw - 1) * prog)
+        bar = "━" * fill + ">" + "─" * (bw - fill - 1)
+        s.text(x + 2, y + ch_ - 2, bar[:fill], col)
+        s.put(x + 2 + fill, y + ch_ - 2, ">", YELLOW)
+        s.text(x + 3 + fill, y + ch_ - 2, bar[fill + 1:], blend(col, BLACK, 0.55))
 
     def draw_search(self, s, now, hacked):
         bw = min(72, s.w - 14)
@@ -645,12 +987,17 @@ class Mode:
         tx = x0 + 3 + len(logo) + 1
         s.put(tx - 1, 1, "│", GREY)
         q = self.query if not hacked else "dedsec was here"
-        typed = q[:max(0, int((now - self.q_start) * 14))] if now > self.q_start else ""
+        typed = self.typed_at(now)
         if hacked:
             typed = "".join(random.choice("#$%&!") if random.random() < 0.15 else ch for ch in q)
         s.text(tx + 1, 1, typed[:bw - 16], WHITE)
-        if int(now * 3) % 2 and len(typed) < len(q):
-            s.put(tx + 1 + len(typed), 1, "█", YELLOW)
+        if int(now * 3) % 2 and now < self.q_done and not hacked:
+            s.put(tx + 1 + len(typed), 1, "▏", YELLOW)
+        if not hacked and self.q_done < now < self.q_done + 5.5 and s.h > 30:
+            n = len(self.results)
+            info = " About %d results (0.%02d s)  -  %d cameras nearby " % (n, 13 + (self.cycle * 37) % 80, 3 + self.cycle % 9)
+            if len(info) < bw - 2:
+                s.text(x0 + (bw - len(info)) // 2, 2, info, blend(CYAN, BLACK, 0.3))
         s.text(x0 + bw - 4, 1, "◉", YELLOW if now < self.q_done else col)
         # suggestions while typing
         if self.q_start < now < self.q_done and len(typed) > 2 and s.h > 30 and not hacked:
@@ -683,26 +1030,32 @@ class Mode:
         lay = "LAYERS: TRAFFIC ● TRANSIT ○ CAMERAS " + ("●" if hacked else "○")
         if s.w > 110:
             s.text(s.w - len(lay) - 6, y, lay, PINK if hacked else DIM_CYAN)
-        # district labels
-        for tx, tz, nm in self.labels:
-            if self.flip is not None:
-                break
-            lx, lz = self.to_local(tx - self.offset[0], tz - self.offset[1])
-            if lz < 50:
+        # Prefer the closest districts, leaving space around pins and other names.
+        # Folded districts behind the upright panel must not label the foreground.
+        candidates = []
+        if self.flip is None:
+            for tx, tz, nm in self.labels:
+                lx, lz = self.to_local(tx - self.offset[0], tz - self.offset[1])
+                if lz < 50 or (self.fold > 0.3 and lz <= self.Zf):
+                    continue
+                q = self.proj(lx, lz)
+                if q and q[2] <= 600:
+                    candidates.append((q[2], q[0], q[1], nm))
+        placed = []
+        for depth, sx, sy, nm in sorted(candidates)[:8]:
+            x, yy = int(sx), int(sy) // 2
+            if not (self.top + 2 <= yy < s.h - 4):
                 continue
-            q = self.proj(lx, lz)
-            if not q or q[2] > 750:
+            name = nm if not hacked else "OWNED BY DEDSEC"
+            left, right = x - len(name) // 2, x - len(name) // 2 + len(name)
+            if left < 2 or right > s.w - 7:
                 continue
-            x, yy = int(q[0]), int(q[1]) // 2
-            if not (self.top + 1 <= yy < s.h - 3):
+            if any(abs(yy - oy) <= 1 and left < ox + ow + 3 and right > ox - 3
+                   for ox, oy, ow, _ in self.occ + placed):
                 continue
-            name = nm
-            if hacked:
-                name = "".join(random.choice("#%&$") if random.random() < 0.3 else c for c in "OWNED BY DEDSEC"[:len(nm) + 4])
-            far = q[2] / 750
-            col = blend(WHITE, (120, 100, 150), far) if not hacked else PINK
-            spaced = " ".join(name) if q[2] < 330 and len(name) < 12 else name
-            self.label(s, x - len(spaced) // 2, yy, spaced, col, avoid=True)
+            col = blend(WHITE, (120, 100, 150), depth / 750) if not hacked else PINK
+            self.label(s, left, yy, name, col, avoid=True)
+            placed.append((left, yy, len(name), 1))
 
     def draw_cars(self, s, dt, hacked):
         for car in self.cars:
@@ -756,7 +1109,7 @@ class Mode:
 
     def step(self, s, now):
         dt, self.last = min(0.1, now - self.last), now
-        hacked = now < self.hack_until
+        hacked = self.hack_start <= now < self.hack_until
         glitch = self.glitch.active(now) or (hacked and now - self.hack_start < 0.5)
 
         # camera drift
@@ -796,20 +1149,37 @@ class Mode:
         self.fold = 0.0
         if self.event == "fold" and getattr(self, "fold_start", None) is not None and self.route_at is None:
             u = now - self.fold_start
-            dur_up, hold, dur_dn = 2.2, 2.8, 2.0
+            dur_up, hold, dur_dn, settle = 2.4, 2.8, 2.1, 1.1
             top_angle = 2.45
             if 0 <= u < dur_up:
-                self.fold = top_angle * (0.5 - 0.5 * math.cos(math.pi * u / dur_up))
+                v = u / dur_up
+                e = v * v * v * (v * (v * 6 - 15) + 10)           # smootherstep lift
+                self.fold = top_angle * e + 0.18 * math.sin(math.pi * v) ** 2 * (1 - v)
             elif dur_up <= u < dur_up + hold:
-                self.fold = top_angle + math.sin((u - dur_up) * 2) * 0.05
+                self.fold = top_angle + math.sin((u - dur_up) * 2.2) * 0.04 * math.exp(-(u - dur_up))
             elif dur_up + hold <= u < dur_up + hold + dur_dn:
                 v = (u - dur_up - hold) / dur_dn
-                self.fold = top_angle * (0.5 + 0.5 * math.cos(math.pi * v))
+                self.fold = top_angle * (1 - v * v * (3 - 2 * v)) ** 1.15
+            elif dur_up + hold + dur_dn <= u < dur_up + hold + dur_dn + settle:
+                v = u - dur_up - hold - dur_dn                    # paper flop: two small bounces
+                self.fold = 0.22 * abs(math.sin(v * 8.5)) * math.exp(-v * 4.2)
         if self.flip is not None and now - self.flip["start"] > self.flip["dur"]:
             self.offset = self.offset_new
             self.flip = None
 
         self.occ = []
+        hk = now - self.hack_start
+        self.sweep = None
+        if hacked and hk < 0.9:
+            here = getattr(self, "here", None)
+            y0 = s.ph * 0.7
+            if here:
+                q = self.proj(*self.to_local(*here))
+                if q:
+                    y0 = q[1]
+            self.sweep = (y0, 4 + (hk / 0.9) ** 1.5 * s.ph)
+        if hacked and 0.9 < hk and (hk % 1.3) < 0.05:
+            self.glitch.trigger(now, 0.14)
         self.raster(s, now, hacked)
         if self.fold > 0.02:
             q = self.proj(0, self.Zf)
@@ -819,10 +1189,13 @@ class Mode:
                 s.pixel_line(0, py, s.w - 1, py, gc)
                 for x in range(int(now * 40) % 12, s.w, 12):
                     s.pixel_line(x, py - 1, x + 3, py - 1, blend(gc, BLACK, 0.4))
+        self.draw_buildings(s, now, hacked)
+        if hacked and hk > 0.5:
+            self.draw_big_skull(s, now, hk)
         self.draw_cars(s, dt, hacked)
         self.draw_route(s, now, hacked)
-        for p in sorted(self.pins, key=lambda p: -self.to_local(p.wx, p.wz)[1]):
-            self.draw_pin(s, p, now, hacked)
+        for i, p in enumerate(sorted(self.pins, key=lambda p: -self.to_local(p.wx, p.wz)[1])):
+            self.draw_pin(s, p, now, hacked, i)
         self.draw_hud(s, now, hacked)
         self.draw_eta(s, now, hacked)
         self.particles.step(s, dt)
@@ -837,9 +1210,51 @@ class Mode:
             s.center(s.h - 4, msg, blend(CYAN, WHITE, pulse(now, 4)))
         if hacked:
             self.draw_hack(s, now)
+        elif self.hack_until and 0 <= now - self.hack_until < 2.6:
+            self.draw_restore(s, now, now - self.hack_until)
         self.ticker.draw(s, s.h - 1, now)
         if glitch:
             self.fx.apply(s, now, True)
+
+    def draw_big_skull(self, s, now, hk):
+        """Huge interlaced DedSec skull hologram washed over the map."""
+        rows, cols = len(SKULL_BIG), len(SKULL_BIG[0])
+        avail = (s.h - self.top - 4) * 2
+        k = max(1, min(int(avail * 0.62 / rows), int(s.w * 0.4 / cols)))
+        left = (s.w - cols * k) // 2 + (random.randint(-2, 2) if random.random() < 0.1 else 0)
+        top = self.top * 2 + (avail - rows * k) // 2 + 2
+        a = min(1.0, (hk - 0.5) / 0.6) * (0.28 + 0.12 * pulse(now, 5))
+        pr, pg, pbb = PINK
+        odd = int(now * 12) & 1
+        for j, row in enumerate(SKULL_BIG):
+            for yy in range(top + j * k, top + j * k + k):
+                if (yy & 1) == odd or not 0 <= yy < s.ph:
+                    continue
+                layer = (s.pb if yy & 1 else s.pt)[yy >> 1]
+                for i, ch in enumerate(row):
+                    if ch != "X":
+                        continue
+                    for xx in range(max(0, left + i * k), min(s.w, left + i * k + k)):
+                        c = layer[xx]
+                        if c is not None:
+                            layer[xx] = (int(c[0] + (pr - c[0]) * a), int(c[1] + (pg - c[1]) * a),
+                                         int(c[2] + (pbb - c[2]) * a))
+
+    def draw_restore(self, s, now, t):
+        """ctOS patches the map back: a white scan sweeps down, then a sheepish toast."""
+        y = int(t / 0.6 * s.h)
+        if t < 0.6:
+            for k, a in ((0, 0.55), (-1, 0.3), (-2, 0.12)):
+                s.tint_row(y + k, WHITE, a)
+        msg = " NUDLE MAPS RESTORED  -  NOTHING HAPPENED. KEEP DRIVING. "
+        if t > 0.3 and len(msg) + 4 < s.w:
+            n = min(len(msg), int((t - 0.3) * 60))
+            x = (s.w - len(msg)) // 2
+            yy = s.h - 6
+            for i, ch in enumerate(msg[:n]):
+                s.put(x + i, yy, ch, BLACK)
+                s.set_bg(x + i, yy, blend(CYAN, WHITE, 0.2))
+                s.pt[yy][x + i] = s.pb[yy][x + i] = None
 
     def draw_hack(self, s, now):
         msg = ["NUDLE MAPS HAS BEEN HIJACKED", "#DEDSEC  -  YOUR ROUTE IS OURS NOW"]

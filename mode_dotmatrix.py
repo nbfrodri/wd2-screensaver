@@ -28,6 +28,7 @@ class Mode:
         self.word=np.empty_like(ordered_word)
         self.word[np.argsort(self.dots[:,0])]=ordered_word
         self.rank=np.argsort(np.argsort(self.dots[:,0]))/max(1,len(self.dots)-1)
+        self.letter_rank=np.minimum(5,np.floor(self.rank*6))/5
 
     @staticmethod
     def word_points(count):
@@ -77,20 +78,25 @@ class Mode:
         if cycle<4 or cycle>=29:
             amount=np.zeros(len(x))
         elif cycle<9:
-            amount=np.clip((cycle-4)/4.25-self.rank*.17,0,1)
+            amount=np.clip((cycle-4-self.letter_rank*1.1)/3.9,0,1)
         elif cycle<24:
             amount=np.ones(len(x))
         else:
-            amount=1-np.clip((cycle-24)/4.25-(1-self.rank)*.17,0,1)
+            amount=1-np.clip((cycle-24-(1-self.letter_rank)*1.1)/3.9,0,1)
         amount=amount*amount*(3-2*amount)
         hx,hy=px+.5,py+.5
         wx=self.word[:,0]+.0015*math.sin(t*.25)
         wy=self.word[:,1]+.002*math.sin(t*.3)
-        # Small arcing paths carry every wallpaper point into the letters.
+        # Two coherent ribbons keep the intermediate state from turning into
+        # uniform confetti. Each letter arrives in sequence; hands/word endpoints
+        # retain their exact silhouettes.
         arc=np.sin(amount*math.pi)
         outx=hx+(wx-hx)*amount
-        outy=hy+(wy-hy)*amount+arc*.032*np.sin(self.phase)
-        wordlum=213+32*np.sin(self.word[:,0]*6-t*.3)
+        outy=hy+(wy-hy)*amount
+        ribbon=.5+np.where(self.dots[:,1]<.5,-.055,.055)+.007*np.sin(self.phase*2-t*1.1)
+        outy=outy*(1-arc*.78)+ribbon*arc*.78
+        sweep=np.exp(-((self.word[:,0]-(.08+(cycle-9)/3*.85))/.055)**2) if 9<=cycle<12 else 0
+        wordlum=207+28*np.sin(self.word[:,0]*6-t*.3)+20*sweep
         return outx,outy,lum+(wordlum-lum)*amount
 
     def draw(self,s,x,y,lum):

@@ -56,6 +56,11 @@ La comprobación breve se ejecuta con `/usr/bin/python3 tools/verify.py`; añade
 
 Consulta [arquitectura](docs/architecture.md) y [validación](docs/validation.md) para el mapa del código y las comprobaciones registradas.
 
+La [revisión del 2 de octubre](docs/polish-2026-10-02.md) documenta las mejoras
+de los catorce modos, el fallo que ocultaba TOWER y las mediciones recientes.
+Las instrucciones para asistentes están en [AGENTS.md](AGENTS.md) y
+[CLAUDE.md](CLAUDE.md).
+
 El [handoff para Claude](handoff.md) conserva la evaluación visual, las prioridades pendientes y las instrucciones para continuar este pulido.
 
 ## Guardar futuras mejoras

@@ -1,4 +1,98 @@
-# Handoff for Claude — WD2 screensavers
+# Handoff — WD2 screensavers
+
+## LATEST: continuation completed (2026-10-02)
+
+Claude's interrupted visual work has been preserved and completed. All delegated
+agents have finished; no source tasks remain running. The user authorized commit
+and push with the configured user identity and no coauthor or assistant trailers.
+AGENTS.md, CLAUDE.md and documentation were created before committing. See the
+repository Git log for the resulting commit; canonical checkout remains
+`/home/phobos/Projects/wd2-screensaver` (capital P).
+
+The Spanish per-mode report is `docs/polish-2026-10-02.md`; final serial timings
+are recorded permanently in `docs/performance-2026-10-02.csv`. Read those and
+AGENTS.md before the historical notes below, which are not pending tasks.
+
+Completed changes:
+- Preserved Claude's detailed DRONE, GOLDENGATE, HACKERSPACE, HOLOGRAM,
+  DEDSEC, NUDLE, PROFILER, TEXTWALL, TRAFFIC and WRENCH scenes and farewells.
+- TOWER import fixed: restored `mode_logo.SKULL` compatibility bitmap without
+  replacing the new detailed DEDSEC skull renderer. Installed discovery lists
+  all 14 unique modes without warnings; actual Saver rotation rendered all 14
+  with transitions. Configured modes/exclude lists are empty.
+- BOTNET shading, atmosphere, label fit, audio states, time-based packets and
+  impact rings; DOTMATRIX staged DEDSEC arrivals and coherent point ribbons;
+  SCOUTX hue-preserving filters and avatars; TOWER glass and background details.
+- Pixel-preserving performance work: DRONE adjugate projection, cached axes,
+  earlier distance culling, bounded halos/neon and fractional coordinate math;
+  WRENCH clipped row fills; HOLOGRAM shading cache/voxel row blocks (original
+  cone retained); NUDLE building culling/fill and label fixes; HACKERSPACE wall
+  palette quantization. HOLOGRAM holds a readable front view before turning.
+- Rejected DRONE window span and HOLOGRAM vector cone variants because whole
+  frame measurements did not show a reliable improvement. Do not reintroduce
+  them based only on isolated-function timings.
+- tools/verify.py checks character width on every frame and uses seed 24 by
+  default. All 14 modes passed full 80-second simulated timelines, every-frame
+  glyph validation and nine farewell progress points at 90x26/175x45/240x60.
+  Changed optimized modes passed again after their final edits.
+- Pixel comparisons: WRENCH 1600 clipped polygons; DRONE 1000 projections and
+  final coordinate change over 18 real camera views; HOLOGRAM 30 frames across
+  three sizes including morph/turn. PNG phase reviews completed. These are
+  headless tests, not a new live desktop/font/focus/data-source check.
+
+Performance limitations are explicit in the report. At175x45 final DRONE39.5ms,
+HACKERSPACE34.3ms, HOLOGRAM34.2ms, NUDLE29.4ms, GOLDENGATE28.7ms and TOWER25.8ms
+miss the advisory25ms goal. All sampled175x45 timings are below41.7ms, with
+little margin for DRONE. Some240x60 samples exceed the24fps budget. Timings
+vary with phase and are not worst-case guarantees. Do not sacrifice scene
+recognition just to claim a timing target.
+
+No integration/system-data/config changes were needed. An already-running
+saver retains its old discovery list: close and relaunch to load all14 modes.
+The runtime path `~/.local/share/wd2-screensaver` is a symlink to this checkout.
+No requirement to delete this handoff: user explicitly asked to maintain it.
+Temporary backup/captures/logs are under `/tmp/wd2-claude-backup-20261002-124633`
+and `/tmp/wd2-claude-review`; they are not permanent repository artifacts.
+
+## Earlier: Claude polish pass interrupted (2026-10-02)
+
+Claude reviewed every mode with `tools/preview.py` contact sheets (175x45, t=3/15/30 s)
+and launched 7 parallel sub-agents, each allowed to edit ONLY its two files. They
+may have been cut off by a usage limit mid-edit, so assume any of these files can
+be half-finished. Nothing was committed by Claude; check `git status` / `git diff`.
+
+| files | diagnosis given to the agent |
+|---|---|
+| `mode_profiler.py` | 3D city behind the card is an unreadable mess of teal shards; make buildings/streets/pedestrians legible, clear reticles, link reticle→card, mini-map |
+| `mode_botnet.py` | smoother globe shading (terminator, atmosphere ring), better nodes/arcs, empty panels (AUDIO TAP blank when silent), spectacular final attack, clear satellites |
+| `mode_traffic.py` | nice but no visible chaos: recurring hack events (all green, near misses, skid marks, bollards, flipping car, hydrant, honking, police car, pedestrians), HACKED HUD with counters |
+| `mode_drone.py` | tunnel is cluttered lines, buildings are flat pale slabs: shaded faces/windows/neon, clean tunnel arches, visible police drone, clear crash zoom |
+| `mode_hackerspace.py` | dark/muddy, giant purple couch covers foreground: readable WD2 hideout (neon sign, monitors with live mini visuals, Wrench mask, 3D printer, robot, cat, server rack), better composition |
+| `mode_tower.py` | blocky tower, sparse city: glass facade, Blume panels, antenna light, satisfying shield shatter, richer city, epic finale |
+| `mode_wrench.py` | KEEP the farewell (user loves it). Flat grey mask, empty black background: real Wrench mask look (bevel, vents, rivets, hood, LED glow) + coherent backdrop (garage/workbench, sparks, holograms). Perf was ~27 ms |
+| `mode_hologram.py` | proper hologram look (scanlines, flicker, light cone), lab stage, meaningful panels, smoother morph |
+| `mode_logo.py` | bottom half empty: neon grid floor with reflections, skyline/palms vs sun, light trails; crisp recognizable skull (was pink noise); purposeful panels |
+| `mode_dotmatrix.py` | MUST stay black/white dotted wallpaper style; add depth/life (parallax dots, breathing hands, dot flow between fingertips, sweep when DEDSEC forms, ripples), elegant not noisy |
+| `mode_textwall.py` | user likes its detail; graffiti lettering is illegible → bold readable block letters (outline, fill, shadow, drips); more street life (cat, skater, pigeons, ctOS camera hacked red→green). Perf was ~28 ms |
+| `mode_scoutx.py` | more/better pixel-art photos, smooth tilted feed scroll, like bursts, story rings, crisp fullscreen zoom with flash, filters |
+| `mode_goldengate.py` | most beautiful mode, polish only: shimmering stretched water ripples (not blocky), cars with lights, ships/sailboats with wakes, gulls, fog under deck, skyline lit windows, DedSec bridge-light flicker |
+| `mode_nudle.py` | clearer labels, smoother fold, 3D downtown buildings, route car icon, pin bounce + shadow, more dramatic DedSec hijack |
+
+Rules given to agents (keep enforcing): ≤25 ms/frame at 175x45 (`tools/snap.py`),
+no exceptions at 90x26 and 240x60, `tools/verify.py --full` passes, single-width
+printable chars only, no readable fake hacking source code, keep `farewell()`,
+recognizable coherent detail over noise, don't touch shared modules.
+
+### To finish
+1. For each file above: `git diff --stat`; if a mode is broken or half-edited and
+   can't be fixed quickly, `git checkout -- <file>` to restore it.
+2. Run `/usr/bin/python3 tools/verify.py --full` and `tools/snap.py` at 3 sizes for all modes.
+3. Make new contact sheets with `tools/preview.py` and compare with the diagnosis.
+4. Tell the user (Spanish) what improved per mode; commit only if the user asks.
+
+---
+
+# Earlier handoff (from Codex) — WD2 screensavers
 
 The user is running low on their Codex 5-hour allowance and asked for a bounded
 polish pass plus this handoff. Continue improving recognition and animation,

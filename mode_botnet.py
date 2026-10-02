@@ -7,8 +7,9 @@ import time
 import numpy as np
 
 from lib import (BLACK, CYAN, DARK, DIM_CYAN, DIM_PINK, GREEN, GREY, PINK, PURPLE, WHITE,
-                 YELLOW, Glitch, blend, pulse)
+                 YELLOW, Glitch, blend, overlaps, pulse)
 from widgets import Panels, Particles, PostFX, Ticker
+from sysdata import DATA
 
 NAME = "BOTNET"
 
@@ -88,13 +89,17 @@ class Mode:
         self.spans = [(int(xs[0]), int(xs[-1])+1) if len(xs) else (0,0)
                       for xs in (np.flatnonzero(row) for row in self.surface)]
         self.sz = -np.sqrt(np.maximum(0, 1-self.sx**2-self.sy**2))
-        self.sunlight = np.rint(np.clip(.30+.62*(-self.sz)-.25*self.sx+.18*self.sy,.16,1)*8).astype(np.int16)
+        self.light_levels = 24
+        # A directional terminator keeps the nightside dark without hard bands.
+        illumination = -.52*self.sx + .26*self.sy - .81*self.sz
+        self.sunlight = np.rint(np.clip(.08+.9*np.maximum(0, illumination),0,1)*self.light_levels).astype(np.int16)
         self.surface_palette = []
         materials = [(12,45,95)] + [tuple(v*(.76+.24*r/3) for v in (43,122,91)) for r in range(4)] + [(180,180,205)]
         for material in materials:
             for cloud in (0,1):
                 base = tuple(v*(1-cloud*.58)+c*cloud*.58 for v,c in zip(material,(190,210,224)))
-                self.surface_palette.extend(tuple(int(v*l/8) for v in base) for l in range(9))
+                self.surface_palette.extend(tuple(int(v*l/self.light_levels) for v in base)
+                                            for l in range(self.light_levels+1))
         self.last = time.time()
         self.reset(self.last)
 
@@ -144,7 +149,8 @@ class Mode:
         clouds = (np.sin(lon*.105+now*.06+np.sin(lat*.15)*2)+np.cos(lat*.22+lon*.04)) > 1.48
         material = np.where(land, relief+1, 0)
         material = np.where(np.abs(lat)>72, 5, material)
-        indices = material*18 + clouds*9 + self.sunlight
+        levels = self.light_levels+1
+        indices = material*(levels*2) + clouds*levels + self.sunlight
         get = self.surface_palette.__getitem__
         for rownum, row in enumerate(indices.tolist()):
             py = rownum+self.gy0
@@ -169,11 +175,24 @@ class Mode:
                     hx, hy, hz = self.view(self.hub)
                     if hz < 0:
                         s.pixel_line(int(x), int(y * 2), int(hx), int(hy * 2), DIM_PINK)
-        # glowing limb
+        # A fine half-pixel atmosphere follows the limb, leaving the surface clear.
         for i in range(120):
-            a = i / 120 * math.tau
-            s.put(int(self.cx + math.cos(a) * self.R * 2), int(self.cy + math.sin(a) * self.R),
-                  "•", blend(PURPLE, CYAN, pulse(now, 2, a)))
+            a, b = i / 120 * math.tau, (i+1) / 120 * math.tau
+            col = blend((24,65,103), CYAN, .15+.25*max(0, -math.cos(a)))
+            s.pixel_line(int(self.cx+math.cos(a)*self.R*2), int((self.cy+math.sin(a)*self.R)*2),
+                         int(self.cx+math.cos(b)*self.R*2), int((self.cy+math.sin(b)*self.R)*2), col)
+
+    def panel_status(self, s, now):
+        for panel in self.panels.items:
+            if panel['title'] != 'AUDIO TAP':
+                continue
+            age = now-panel['born']
+            if age < .3 or panel['life']-age < .3:
+                continue
+            if not DATA.audio_live or DATA.level < .005:
+                x,y,w,h = panel['r']
+                label = 'MONITOR OFFLINE' if not DATA.audio_live else 'SILENCE / WAITING'
+                s.text(x+(w-len(label))//2, y+h//2, label, DIM_CYAN)
 
     def farewell(self, s, now, t):
         from cinematic import exit_scene
@@ -197,6 +216,7 @@ class Mode:
         self.rotation = (math.cos(self.spin), math.sin(self.spin), math.cos(self.tilt), math.sin(self.tilt))
 
         self.panels.draw(s, now)
+        self.panel_status(s, now)
 
         if self.complete_until is not None:
             if now > self.complete_until:
@@ -238,7 +258,7 @@ class Mode:
                                  "color": random.choice((CYAN, YELLOW, GREEN, WHITE))})
         alive = []
         for pk in self.packets:
-            pk["i"] += 0.6
+            pk["i"] += 14.4 * dt
             i = int(pk["i"])
             if i < len(pk["path"]):
                 for k in range(4):
@@ -249,6 +269,7 @@ class Mode:
                 alive.append(pk)
         self.packets = alive[-120:]
 
+        labels = []
         for n in self.nodes:
             x, y, z = self.view(n["p"])
             age = now - n["born"]
@@ -264,6 +285,7 @@ class Mode:
                     s.text(int(x) - 3, int(y) - 1, "▄▀▀▀▄", col)
                     s.text(int(x) - 3, int(y), "█ ◆ █", col)
                     s.text(int(x) + 3, int(y) + 1, "DEDSEC HQ", WHITE)
+                    labels.append((int(x)+3,int(y)+1,9,1))
                 continue
             if not front:
                 s.put(int(x), int(y), "∙", DARK)
@@ -277,10 +299,13 @@ class Mode:
                     self.particles.burst(x, y, 10, (YELLOW, GREEN), speed=8)
             col = GREEN if int(now * 3 + x) % 9 else WHITE
             s.put(int(x), int(y), "◉", col)
-            if (age < 1.5 and n in self.nodes[-2:]) or (z < -0.85 and int(x) % 3 == 0):
+            rect = (int(x)+2,int(y),max(len(n['label']),len(n.get('city',''))),2)
+            visible = rect[0]+rect[2] < self.w-2 and 2 < rect[1] < self.h-5
+            if visible and len(labels)<3 and not any(overlaps(rect,r,1) for r in labels) and ((age < 1.5 and n in self.nodes[-2:]) or (z < -0.85 and int(x) % 3 == 0)):
                 s.text(int(x) + 2, int(y), n["label"], YELLOW if age < 3 else GREY)
                 if age < 3:
                     s.text(int(x) + 2, int(y) + 1, n["city"], DIM_CYAN)
+                labels.append(rect)
 
         self.particles.step(s, dt)
 
@@ -308,7 +333,16 @@ class Mode:
                     s.pixel_line(int(x), int(y * 2), target_x, target_y * 2, PINK if int(now * 12) % 2 else CYAN)
             s.brackets(target_x - 3, target_y - 2, 7, 5, YELLOW, arm=1)
             s.text(target_x - 5, target_y - 3, "BLUME CORE", YELLOW)
-        msg = ["BEAM ATTACK" if remaining < 2.5 else "BOTNET READY", "%d DEVICES UNDER DEDSEC CONTROL" % (len(self.nodes) - 1), "TARGET: BLUME ctOS CORE"]
+        if remaining < 1.2:
+            impact = 1-remaining/1.2
+            for ring in (0, .16):
+                radius = max(0,impact-ring)*self.R*1.5
+                col = blend(WHITE,CYAN,impact)
+                for i in range(48):
+                    a = i/48*math.tau
+                    s.pixel(int(target_x+math.cos(a)*radius*2),
+                            int((target_y+math.sin(a)*radius)*2),blend(col,BLACK,impact))
+        msg = ["CORE ISOLATED" if remaining < 1.2 else "BEAM ATTACK" if remaining < 2.5 else "BOTNET READY", "%d DEVICES UNDER DEDSEC CONTROL" % (len(self.nodes) - 1), "TARGET: BLUME ctOS CORE"]
         y = self.h - 8
         bw = max(len(m) for m in msg) + 8
         col = PINK if int(now * 6) % 2 else YELLOW
