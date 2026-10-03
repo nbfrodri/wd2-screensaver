@@ -3,7 +3,6 @@
 ## Working context
 
 - Read `README.md` and the relevant guides under `docs/` before editing.
-  `docs/validation.md` records the latest verified state and measurement limits.
 - Canonical checkout: `/home/phobos/Projects/wd2-screensaver` (capital P).
   `~/.local/share/wd2-screensaver` is a symlink to this checkout on this machine.
 - User-facing explanations and documentation are in Spanish. Code comments

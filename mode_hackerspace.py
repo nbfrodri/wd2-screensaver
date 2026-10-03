@@ -25,7 +25,7 @@ NAME = "HACKERSPACE"
 NEAR = 0.2
 X0, X1, Z0, Z1, YC = -10.0, 10.0, -3.0, 13.0, 7.0     # room box (camera looks towards +z)
 
-WOOD = (120, 78, 52)
+WOOD = (150, 94, 52)
 DARKM = (46, 46, 58)
 METAL = (92, 96, 116)
 CARD = (190, 140, 84)
@@ -69,27 +69,30 @@ PRINTS = [("SKULL KEYCHAIN", lambda u: 0.55 + 0.45 * math.sin(min(1, u * 1.2) * 
 # ---------------------------------------------------------------- lights
 # position, colour, radius, base intensity, beat gain
 LIGHTS = [
-    ((1.6, 5.95, 12.55), (255, 40, 150), 3.6, 1.25, 0.55),     # 0 neon DEDSEC sign
-    ((-5.3, 2.6, 11.2), (40, 200, 255), 2.8, 0.85, 0.25),      # 1 monitor wall
+    ((1.6, 5.95, 12.55), (255, 40, 150), 3.6, 1.25, 0.4),     # 0 neon DEDSEC sign
+    ((-5.3, 2.6, 11.2), (40, 200, 255), 2.8, 0.95, 0.25),      # 1 monitor wall
     ((4.3, 2.9, 12.2), (90, 110, 255), 2.8, 0.75, 0.15),       # 2 TV
     ((-8.75, 2.35, 11.7), (255, 165, 70), 2.0, 1.15, 0.0),     # 3 desk lamp
-    ((-5.0, 6.1, 4.5), (255, 190, 120), 4.6, 0.45, 0.35),      # 4 string lights (left)
-    ((4.5, 6.1, 8.5), (255, 170, 140), 4.6, 0.45, 0.35),       # 5 string lights (right)
+    ((-5.0, 6.1, 4.5), (255, 190, 110), 4.6, 0.5, 0.15),      # 4 string lights (left)
+    ((4.5, 6.1, 8.5), (255, 170, 140), 4.6, 0.45, 0.15),       # 5 string lights (right)
     ((9.5, 4.2, 7.0), (100, 130, 230), 3.2, 0.55, 0.0),        # 6 window / moonlight
     ((8.9, 2.0, 10.9), (60, 255, 140), 1.5, 0.45, 0.3),        # 7 server rack LEDs
     ((-8.9, 1.9, 7.4), (255, 120, 40), 1.2, 0.35, 0.0),        # 8 3D printer hot end
+    ((1.0, 1.3, 8.2), (255, 45, 140), 3.2, 0.30, 0.1),       # 9 neon spill on floor / furniture
+    ((-8.0, 1.75, 11.3), (255, 190, 100), 1.7, 0.95, 0.0),     # 10 warm pool of the desk lamp
+    ((-5.3, 1.95, 10.9), (60, 210, 255), 2.4, 0.85, 0.2),      # 11 cool monitor light on the desk
 ]
-AMBIENT = np.array([0.26, 0.23, 0.30], np.float32)
+AMBIENT = np.array([0.19, 0.185, 0.23], np.float32)
 
 # camera tour: (x, y, z, yaw, pitch); one key every KEY_T seconds, looped
 KEY_T = 11.0
 KEYS = [
-    (0.6, 3.5, 0.2, 0.02, 0.15, "CAM 01 // MAIN ROOM"),
-    (-3.9, 2.75, 6.2, -0.06, 0.10, "CAM 02 // RIG"),
-    (-4.3, 3.3, 5.2, -0.62, 0.16, "CAM 03 // WORKSHOP"),
-    (-0.8, 1.75, 3.2, 0.05, 0.0, "CAM 04 // FLOOR"),
-    (3.6, 3.0, 4.6, 0.58, 0.12, "CAM 05 // LOUNGE"),
-    (2.2, 4.3, 1.4, 0.18, 0.24, "CAM 06 // OVERHEAD"),
+    (0.8, 3.5, -0.2, 0.03, 0.15, "CAM 01 // MAIN ROOM"),
+    (-1.5, 3.0, 3.6, 0.0, 0.12, "CAM 02 // RIG"),
+    (-4.9, 2.6, 4.4, -0.85, 0.12, "CAM 03 // WORKSHOP"),
+    (-0.8, 1.9, 2.4, 0.06, 0.04, "CAM 04 // FLOOR"),
+    (3.4, 2.9, 3.6, 0.78, 0.10, "CAM 05 // LOUNGE"),
+    (2.0, 4.4, 0.4, 0.14, 0.26, "CAM 06 // OVERHEAD"),
 ]
 
 
@@ -108,12 +111,12 @@ def art(rows, pal):
     return rgb, alpha
 
 
-def font_rows(word, on="#", off="."):
+def font_rows(word, on="#", off=".", gap=1):
     rows = [""] * 5
     for ch in word:
         for i, line in enumerate(FONT[ch]):
-            rows[i] += "".join(on if c != " " else off for c in line) + off
-    return [r[:-1] for r in rows]
+            rows[i] += "".join(on if c != " " else off for c in line) + off * gap
+    return [r[:-gap] for r in rows]
 
 
 def dilate_rows(rows, ch="o"):
@@ -582,6 +585,10 @@ class Mode:
         self.light_pos = np.array([l[0] for l in LIGHTS], np.float32)
         self.light_col = np.array([l[1] for l in LIGHTS], np.float32) / 255.0
         self.light_inv_r2 = np.array([1.0 / (l[2] * l[2]) for l in LIGHTS], np.float32)
+        self.gkey = self.gcache = None
+        # floor footprints (x0, x1, z0, z1) that receive contact shadows
+        self.footprints = [(-9.2, -1.4, 11.2, 12.8), (-4.9, -3.7, 9.4, 10.6), (1.9, 6.6, 12.0, 13.0), (8.0, 10.0, 5.3, 9.7),
+                           (-9.9, -8.3, 6.3, 8.5), (8.3, 9.7, 11.0, 12.8), (0.2, 1.4, 11.5, 12.7), (4.3, 5.5, 8.6, 9.8)]
         self.setup_grid()
         self.setup_textures()
         self.static = self.build()
@@ -597,26 +604,34 @@ class Mode:
         self.VY = np.broadcast_to(ys[:, None], (PH, W)).ravel().copy()
         b4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], np.float32) / 2.0
         self.dither = np.tile(b4, (PH // 4 + 1, W // 4 + 1))[:PH, :W].ravel()[:, None].copy()
-        grid = np.arange(PH * W).reshape(PH, W)[::2, ::2]
+        rx = (np.arange(W, dtype=np.float32) + 0.5) / W * 2 - 1
+        ry = (np.arange(PH, dtype=np.float32) + 0.5) / PH * 2 - 1
+        r2 = rx[None, :] ** 2 * 0.8 + ry[:, None] ** 2 * 0.9
+        self.vig = np.clip(1.08 - 0.6 * r2 ** 1.2, 0.32, 1.0).astype(np.float32).ravel()[:, None].copy()
+        grid = np.arange(PH * W).reshape(PH, W)[::2, ::3]
         self.sub_shape = grid.shape
         self.sub = grid.ravel()
 
     def setup_textures(self):
         # neon sign: font upsampled 3x, tube core, letter ids and a blurred bloom
-        rows = font_rows("DEDSEC")
+        rows = font_rows("DEDSEC", gap=2)
         mask = np.array([[c == "#" for c in r] for r in rows], bool)
-        letters = np.array([[(x // 7) + 1 for x in range(len(rows[0]))] for _ in rows], np.int8)
-        up = 3
+        letters = np.array([[(x // 8) + 1 for x in range(len(rows[0]))] for _ in rows], np.int8)
+        up = 4
         m = np.kron(mask, np.ones((up, up), bool))
         lid = np.kron(letters, np.ones((up, up), np.int8)) * m
         core = m.copy()
-        core[1:-1, 1:-1] = m[1:-1, 1:-1] & m[:-2, 1:-1] & m[2:, 1:-1] & m[1:-1, :-2] & m[1:-1, 2:]
-        core[0, :] = core[-1, :] = False
-        pad = 14
+        for _ in range(2):                        # erode: thin bright tube core inside a pink sheath
+            c2 = core.copy()
+            c2[1:-1, 1:-1] = core[1:-1, 1:-1] & core[:-2, 1:-1] & core[2:, 1:-1] & core[1:-1, :-2] & core[1:-1, 2:]
+            c2[0, :] = c2[-1, :] = False
+            c2[:, 0] = c2[:, -1] = False
+            core = c2
+        pad = 12
         H, Wd = m.shape[0] + pad * 2, m.shape[1] + pad * 2
         big = np.zeros((H, Wd), np.float32)
         big[pad:-pad, pad:-pad] = m
-        k = np.exp(-np.linspace(-2.2, 2.2, 2 * pad + 1) ** 2).astype(np.float32)
+        k = np.exp(-np.linspace(-3.0, 3.0, 2 * pad + 1) ** 2).astype(np.float32)
         k /= k.sum()
         blur = np.apply_along_axis(lambda r: np.convolve(r, k, "same"), 1, big)
         blur = np.apply_along_axis(lambda c: np.convolve(c, k, "same"), 0, blur)
@@ -628,7 +643,7 @@ class Mode:
         tex = 0.24 / up
         sw = len(rows[0]) * 0.24
         sx0 = 1.6 - sw / 2 - pad * tex
-        stop = 6.55 + pad * tex
+        stop = 6.5 + pad * tex
         self.sign = (sx0, stop, tex, lid_big, core_big, blur)
         self.sign_rect = (sx0, sx0 + Wd * tex, stop - H * tex, stop)
 
@@ -722,29 +737,35 @@ class Mode:
                 B.append(Box(x, 1.48, z + 0.14, 0.14, 0.3, 0.14, DARKM))
             B.append(Box(x, y, z, 2.1, hh, 0.12, (22, 22, 30), yaw=yaw, screen=idx, edge=(70, 70, 92)))
         B.append(Box(-5.3, 1.4, 11.5, 1.3, 0.06, 0.4, (40, 40, 52), edge=PINK, tag="keyboard"))
-        B.append(Box(-4.35, 1.4, 11.5, 0.18, 0.06, 0.26, (60, 60, 70), edge=CYAN))
-        B.append(Box(-6.6, 1.4, 11.45, 0.18, 0.3, 0.18, (220, 40, 40)))
-        B.append(Box(-6.9, 1.4, 11.6, 0.18, 0.3, 0.18, (40, 200, 90)))
+        B.append(Box(-6.6, 1.4, 11.45, 0.2, 0.26, 0.2, (232, 232, 240), edge=WHITE, tag="mug"))
+        B.append(Box(-6.95, 1.4, 11.6, 0.2, 0.26, 0.2, (30, 190, 220), edge=CYAN))
+        B.append(Box(-3.7, 1.4, 11.5, 0.22, 0.05, 0.34, (30, 30, 36), edge=(110, 110, 130)))   # phone
+        B.append(Box(-3.9, 1.4, 11.55, 0.1, 0.04, 0.16, (60, 60, 70)))                           # mouse
         # laptop on the right end of the desk
         B.append(Box(-1.9, 1.4, 11.55, 1.0, 0.05, 0.65, (60, 60, 72)))
         B.append(Box(-1.9, 1.45, 11.88, 1.0, 0.62, 0.05, (30, 30, 38), screen=6, edge=(90, 90, 110)))
         # desk lamp
         B.append(Box(-8.75, 1.4, 11.9, 0.45, 0.08, 0.45, METAL))
         B.append(Box(-8.75, 2.2, 11.6, 0.45, 0.28, 0.4, (255, 190, 90), emit=True, tag="lamp"))
-        # office chair, back to the camera and low enough not to hide the screens
-        B.append(Box(-4.3, 0.0, 10.4, 0.16, 0.75, 0.16, DARKM))
-        B.append(Box(-4.3, 0.0, 10.4, 1.0, 0.08, 0.16, DARKM))
-        B.append(Box(-4.3, 0.75, 10.4, 1.1, 0.18, 1.0, (90, 24, 56), edge=PINK))
-        B.append(Box(-4.3, 0.93, 9.95, 1.1, 1.0, 0.16, (110, 28, 66), edge=PINK))
+        # gaming chair, seen from behind: dark shell, pink bolsters and headrest, 5-star base
+        B.append(Box(-4.3, 0.0, 10.0, 0.14, 0.5, 0.14, METAL))
+        B.append(Box(-4.3, 0.0, 10.0, 1.0, 0.07, 0.14, (70, 72, 90), edge=(150, 150, 170)))
+        B.append(Box(-4.3, 0.0, 10.0, 0.14, 0.07, 1.0, (70, 72, 90)))
+        B.append(Box(-4.3, 0.5, 10.05, 1.1, 0.16, 1.0, (40, 40, 56), edge=(120, 120, 150)))
+        B.append(Box(-4.3, 0.66, 9.55, 0.95, 1.1, 0.2, (36, 36, 52), edge=(130, 130, 160)))
+        B.append(Box(-4.82, 0.7, 9.6, 0.16, 0.95, 0.34, (225, 30, 110), edge=(255, 140, 190)))
+        B.append(Box(-3.78, 0.7, 9.6, 0.16, 0.95, 0.34, (225, 30, 110), edge=(255, 140, 190)))
+        B.append(Box(-4.3, 1.78, 9.5, 0.5, 0.24, 0.14, (225, 30, 110), edge=(255, 140, 190)))
         # --- shelf with Wrench's mask (back wall, upper left)
         B.append(Box(-7.9, 4.85, 12.65, 3.0, 0.1, 0.7, WOOD, edge=(170, 120, 80)))
         B.append(Box(-7.75, 4.95, 12.62, 0.35, 0.12, 0.35, (30, 30, 38)))
         for dx, col in ((-9.0, (240, 30, 130)), (-8.75, (20, 200, 230)), (-6.75, (245, 220, 30))):
             B.append(Box(dx, 4.95, 12.6, 0.2, 0.5, 0.2, col))
-        # --- pizza tower and plant between desk and TV
-        for i, yaw in enumerate((0.1, -0.15, 0.25, 0.0, -0.3)):
-            B.append(Box(-0.45, i * 0.14, 12.2, 1.2, 0.13, 1.2, CARD, yaw=yaw, edge=CARD_EDGE))
-        B.append(Box(0.75, 0.0, 12.35, 0.75, 0.6, 0.75, (160, 70, 50), edge=(200, 110, 80)))
+        # --- pizza tower and plant pot between desk and TV
+        for i, yaw in enumerate((0.1, -0.2, 0.22, -0.08)):
+            B.append(Box(-0.55, i * 0.15, 12.1, 1.2, 0.14, 1.2, CARD, yaw=yaw, edge=CARD_EDGE))
+        B.append(Box(0.9, 0.0, 12.3, 0.7, 0.5, 0.7, (170, 86, 58), edge=(215, 130, 96)))
+        B.append(Box(0.9, 0.5, 12.3, 0.84, 0.1, 0.84, (196, 104, 70), edge=(240, 160, 120)))
         # --- TV corner (back right)
         B.append(Box(4.3, 0.0, 12.5, 4.6, 0.75, 0.8, (52, 38, 42), edge=(110, 84, 80)))
         B.append(Box(3.3, 0.75, 12.4, 0.9, 0.16, 0.55, (24, 24, 30), edge=GREEN, tag="console"))
@@ -755,23 +776,24 @@ class Mode:
         B.append(Box(7.9, 0.0, 12.3, 0.7, 1.4, 0.8, (40, 42, 56), edge=(80, 92, 116)))
         # --- lounge: couch under the window, facing the room
         cushion = (150, 70, 170)
-        B.append(Box(8.7, 0.0, 7.4, 1.6, 0.5, 4.0, (110, 50, 130)))
-        B.append(Box(9.5, 0.5, 7.4, 0.4, 0.75, 4.0, (120, 56, 140), edge=(190, 120, 210)))
-        B.append(Box(8.7, 0.5, 5.25, 1.6, 0.35, 0.3, (120, 56, 140)))
-        B.append(Box(8.7, 0.5, 9.55, 1.6, 0.35, 0.3, (120, 56, 140)))
+        B.append(Box(8.7, 0.0, 7.4, 1.6, 0.5, 4.0, (92, 46, 118), edge=(170, 110, 200)))
+        B.append(Box(9.5, 0.5, 7.4, 0.4, 0.75, 4.0, (104, 52, 130), edge=(210, 150, 235)))
+        B.append(Box(8.7, 0.5, 5.25, 1.6, 0.4, 0.3, (104, 52, 130), edge=(210, 150, 235)))
+        B.append(Box(8.7, 0.5, 9.55, 1.6, 0.4, 0.3, (104, 52, 130), edge=(210, 150, 235)))
         B.append(Box(8.6, 0.5, 6.4, 1.3, 0.16, 1.7, cushion, edge=(200, 130, 220)))
         B.append(Box(8.6, 0.5, 8.4, 1.3, 0.16, 1.7, cushion, edge=(200, 130, 220)))
         B.append(Box(9.1, 0.66, 6.0, 0.35, 0.45, 0.6, (240, 200, 40), yaw=0.3))          # pillow
-        B.append(Box(9.0, 0.0, 4.6, 0.6, 0.55, 0.6, (160, 70, 50), edge=(200, 110, 80)))  # plant pot
+        B.append(Box(9.0, 0.0, 4.6, 0.55, 0.45, 0.55, (170, 86, 58), edge=(215, 130, 96)))  # plant pot
+        B.append(Box(9.0, 0.45, 4.6, 0.68, 0.1, 0.68, (196, 104, 70), edge=(240, 160, 120)))
         # --- left wall workshop: 3D printer table
         B.append(Box(-9.1, 0.0, 7.4, 1.6, 1.0, 2.2, WOOD, edge=(170, 120, 80)))
         B.append(Box(-9.1, 1.0, 7.4, 1.3, 0.12, 1.3, (60, 60, 76), tag="printer"))
         B.append(Box(-9.3, 1.0, 8.35, 0.5, 0.5, 0.25, (20, 200, 230)))                    # filament spool
         # --- floor clutter: open pizza box, cans
-        B.append(Box(2.6, 0.0, 6.2, 1.1, 0.08, 1.1, CARD, edge=CARD_EDGE, tag="pizza"))
-        B.append(Box(2.6, 0.0, 6.78, 1.1, 1.0, 0.05, CARD, edge=CARD_EDGE))
-        B.append(Box(3.5, 0.0, 5.7, 0.2, 0.32, 0.2, (40, 160, 230)))
-        B.append(Box(-1.8, 0.0, 5.2, 0.32, 0.2, 0.2, (240, 200, 40), yaw=1.2))
+        B.append(Box(4.9, 0.0, 9.2, 0.8, 0.07, 0.8, CARD, edge=CARD_EDGE, tag="pizza"))
+        B.append(Box(4.9, 0.0, 9.62, 0.8, 0.6, 0.04, CARD, edge=CARD_EDGE))
+        B.append(Box(5.6, 0.0, 8.7, 0.16, 0.26, 0.16, (40, 160, 230)))
+        B.append(Box(-2.6, 0.0, 9.4, 0.26, 0.16, 0.16, (240, 200, 40), yaw=1.2))
         return B
 
     def setup_face_lighting(self):
@@ -795,14 +817,14 @@ class Mode:
         self.face_form = np.array(form, np.float32)[:, None]
 
     def make_strands(self):
-        strands = [((X0, 6.5, 2.0), (X1, 6.7, 6.5)), ((X0, 6.7, 8.0), (X1, 6.5, 12.5)), ((-9.8, 6.6, 12.8), (9.8, 6.6, 12.8))]
+        strands = [((X0, 6.8, 2.0), (X1, 6.9, 6.5)), ((X0, 6.9, 8.0), (X1, 6.85, 12.5)), ((-9.8, 6.95, 12.8), (9.8, 6.95, 12.8))]
         out = []
         for a, b in strands:
             n = 18
             pts = []
             for i in range(n + 1):
                 t = i / n
-                pts.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - math.sin(t * math.pi) * 0.7,
+                pts.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - math.sin(t * math.pi) * 0.3,
                             a[2] + (b[2] - a[2]) * t))
             out.append(pts)
         return out
@@ -831,6 +853,7 @@ class Mode:
                 k *= 1.0 if self.print_state[1] < 1 else 0.2
             K.append(k)
         K = np.array(K, np.float32)
+        K = np.round(K * 10) / 10                         # coarse steps keep static regions stable
         if now < self.blackout:
             K *= 0.4
         return K
@@ -846,7 +869,7 @@ class Mode:
         return (r, g, b)
 
     # ------------------------------------------------------------ the room shell (numpy ray cast)
-    def shell(self, s, now, K, beat):
+    def geometry(self, s):
         cam = self.cam
         c, sn, cp, sp = cam.c, cam.s, cam.cp, cam.sp
         VX, VY = self.VX, self.VY
@@ -896,14 +919,14 @@ class Mode:
         ceil = np.flatnonzero(on_y & (dy > 0))
         if back.size:
             u, v = hx[back], hy[back]
-            a = brick(back, u, v, (132, 66, 70), (70, 48, 58), 0.9, 0.36)
+            a = brick(back, u, v, (122, 74, 68), (64, 50, 54), 0.9, 0.36)
             sk = v < 0.18
             a[sk] = (60, 30, 90)
             alb[back] = a
         if front.size:
-            alb[front] = brick(front, -hx[front], hy[front], (90, 74, 112), (56, 46, 70), 1.2, 0.6)
+            alb[front] = brick(front, -hx[front], hy[front], (88, 80, 108), (54, 50, 66), 1.2, 0.6)
         if left.size:
-            alb[left] = brick(left, hz[left], hy[left], (96, 76, 128), (58, 46, 78), 1.2, 0.6)
+            alb[left] = brick(left, hz[left], hy[left], (90, 82, 118), (54, 50, 72), 1.2, 0.6)
         if right.size:
             alb[right] = brick(right, -hz[right], hy[right], (66, 92, 112), (40, 56, 70), 1.2, 0.6)
         if floor.size:
@@ -912,19 +935,22 @@ class Mode:
             fu, fv = u / 1.5 - np.floor(u / 1.5), v / 1.5 - np.floor(v / 1.5)
             m = (fu < np.maximum(0.04, pp / 1.5 * 0.8)) | (fv < np.maximum(0.04, pp / 1.5 * 0.8))
             stain = (0.9 + 0.1 * np.sin(u * 1.3 + 2) * np.sin(v * 1.7)).astype(np.float32)[:, None]
-            a = np.where(m[:, None], np.float32([62, 56, 64]), np.float32([104, 96, 104]) * stain)
+            a = np.where(m[:, None], np.float32([66, 62, 72]), np.float32([84, 86, 100]) * stain)
             # Woven rug: muted dyes sit below the neon and monitor light.
             rug = (u > -3.6) & (u < 4.2) & (v > 4.4) & (v < 10.2)
             if rug.any():
                 e = np.minimum(np.minimum(u - -3.6, 4.2 - u), np.minimum(v - 4.4, 10.2 - v))[rug]
-                band = (np.floor(e / 0.28).astype(np.int32)) % 4
-                rp = np.float32([(112, 40, 72), (44, 34, 68), (140, 104, 62), (44, 34, 68)])
+                band = np.where(e < 0.16, 0, np.where(e < 0.34, 1, np.where(e < 0.46, 2, 3)))
+                rp = np.float32([(98, 80, 72), (58, 46, 70), (84, 60, 76), (70, 54, 76)])
                 ru, rv = u[rug], v[rug]
                 # Fade the weave below pixel size, so distant fabric stays calm.
                 weave = ((np.floor(ru * 14) + np.floor(rv * 14)) % 2 - .5)
                 detail = np.clip(1 - pp[rug] * 18, 0, 1)
-                wear = .93 + .045 * np.sin(ru * 1.7) * np.sin(rv * 2.1)
-                a[rug] = rp[band] * (wear + weave * detail * .08)[:, None]
+                wear = .94 + .04 * np.sin(ru * 1.7) * np.sin(rv * 2.1)
+                a[rug] = rp[band] * (wear + weave * detail * .05)[:, None]
+            for fx0, fx1, fz0, fz1 in self.footprints:
+                d = np.maximum(np.maximum(fx0 - u, u - fx1), np.maximum(fz0 - v, v - fz1))
+                a = a * (1 - 0.6 * np.clip(1 - d / 0.55, 0, 1))[:, None]
             alb[floor] = a
         if ceil.size:
             v = hz[ceil]
@@ -949,7 +975,7 @@ class Mode:
             on = alpha[iv, iu]
             alb[sel[on]] = rgb[iv[on], iu[on]]
 
-        # lighting is smooth: evaluate it on a half-resolution grid, then upsample
+        # lighting is smooth: evaluate its geometry on a coarse grid (cached per camera pose)
         PH, W = s.ph, s.w
         sub = self.sub
         ax = np.where(on_x, 0, np.where(on_y, 1, 2))[sub]
@@ -962,11 +988,10 @@ class Mode:
         d2 = ddx * ddx + ddy * ddy + ddz * ddz + f32(1e-4)
         dp = np.abs(hh[:, None] - lp.T[ax])
         f = (f32(0.3) + f32(0.7) * dp / np.sqrt(d2)) / (f32(1) + d2 * self.light_inv_r2[None, :])
-        lh = (f @ (self.light_col * K[:, None]) + AMBIENT).reshape(self.sub_shape + (3,))
-        light = np.repeat(np.repeat(lh, 2, axis=0), 2, axis=1)[:PH, :W].reshape(N, 3)
-        out = alb * light * 1.12
+        base = alb * f32(1.12) * self.vig
 
-        # emissive: neon sign + bloom on the back wall, skyline window on the right wall
+        # emissive pieces: neon sign + bloom on the back wall, skyline window on the right wall
+        sign = win = None
         if back.size:
             sx0, stop, tex, lid, core, blur = self.sign
             u, v = hx[back], hy[back]
@@ -977,20 +1002,9 @@ class Mode:
             if ok.any():
                 sel = back[ok]
                 iu, iv = iu[ok], iv[ok]
-                glow = 0.55 + 0.45 * beat
-                dead = self.sign_dead[0] if self.sign_dead[1] > now else None
-                bl = blur[iv, iu]
-                out[sel] += bl[:, None] * np.float32([150, 20, 90]) * glow
                 L = lid[iv, iu]
                 tube = L > 0
-                if dead is not None:
-                    tube &= L != dead + 1
-                tsel = sel[tube]
-                out[tsel] = np.float32([255, 60, 160]) * (0.8 + 0.2 * glow)
-                cs = core[iv, iu] & tube
-                out[sel[cs]] = np.float32([255, 205, 235])
-                if dead is not None:
-                    out[sel[L == dead + 1]] = np.float32([70, 20, 46])
+                sign = (sel, blur[iv, iu][:, None], L, tube, core[iv, iu] & tube)
         if right.size:
             u0, vt, tex, img = self.window
             u, v = -hz[right], hy[right]
@@ -999,7 +1013,35 @@ class Mode:
             iv = ((vt - v) / tex).astype(np.int32)
             ok = (iu >= 0) & (iu < tw) & (iv >= 0) & (iv < th) & (u >= u0) & (v <= vt)
             if ok.any():
-                out[right[ok]] = img[iv[ok], iu[ok]]
+                win = (right[ok], iv[ok], iu[ok])
+        return {"f": f, "base": base, "sign": sign, "win": win}
+
+    def shell(self, s, now, K, beat):
+        cam = self.cam
+        key = (tuple(cam.pos), cam.yaw, cam.pitch)
+        if key != self.gkey:
+            self.gkey, self.gcache = key, self.geometry(s)
+        G = self.gcache
+        f32 = np.float32
+        N = s.ph * s.w
+        lh = (G["f"] @ (self.light_col * K[:, None]) + AMBIENT).reshape(self.sub_shape + (3,))
+        light = np.repeat(np.repeat(lh, 2, axis=0), 3, axis=1)[:s.ph, :s.w].reshape(N, 3)
+        out = G["base"] * light
+        if G["sign"] is not None:
+            sel, bl, L, tube, cs = G["sign"]
+            glow = 0.55 + 0.45 * beat
+            dead = self.sign_dead[0] if self.sign_dead[1] > now else None
+            out[sel] += bl * np.float32([120, 14, 70]) * glow
+            if dead is not None:
+                tube = tube & (L != dead + 1)
+                cs = cs & tube
+            out[sel[tube]] = np.float32([255, 60, 160]) * (0.8 + 0.2 * glow)
+            out[sel[cs]] = np.float32([255, 205, 235])
+            if dead is not None:
+                out[sel[L == dead + 1]] = np.float32([70, 20, 46])
+        if G["win"] is not None:
+            idx, iv, iu = G["win"]
+            out[idx] = self.window[3][iv, iu]
 
         # A compact palette keeps smooth wall lighting cheap to encode in the terminal.
         q = np.clip(out, 0, 255.9).astype(np.int32) >> 4
@@ -1043,8 +1085,8 @@ class Mode:
                 continue
             col = b.fc[fi] if b.fc else b.col
             fill(s, P, col)
-            if (unclipped and b.screen is None and not b.emit and b.col in (WOOD, CARD)
-                    and max(xs) - min(xs) >= 5 and max(ys) - min(ys) >= 3):
+            if (unclipped and b.screen is None and not b.emit and b.col == WOOD
+                    and max(xs) - min(xs) >= 10 and max(ys) - min(ys) >= 4):
                 A, Bv, C, D = views
                 tc = shade(col, 0.78)
                 for j in (1, 2, 3):
@@ -1377,8 +1419,8 @@ class Mode:
     def pizza_top(self, s, b, K):
         lt = self.light_at((b.c[0], 0.3, b.c[1]), K)
         pal = {"c": mul((210, 140, 60), lt), "y": mul((250, 200, 70), lt), "r": mul((200, 40, 30), lt)}
-        tex = 0.1
-        self.bitmap(s, (b.c[0] - 5 * tex, 0.085, b.c[1] + 4.5 * tex), (tex, 0, 0), (0, 0, -tex), PIZZA, pal)
+        tex = 0.07
+        self.bitmap(s, (b.c[0] - 5 * tex, 0.075, b.c[1] + 4.5 * tex), (tex, 0, 0), (0, 0, -tex), PIZZA, pal)
 
     # ------------------------------------------------------------ actors
     def robot_step(self, now, dt):
@@ -1488,11 +1530,15 @@ class Mode:
 
     # ------------------------------------------------------------ camera
     def camera(self, t):
+        if self.w * self.h > 9000:
+            t = int(t * 12) / 12.0          # big canvases: update the pose at 12 Hz so cached frames stay cheap
         n = len(KEYS)
         f = t / KEY_T
         i = int(f) % n
         u = f - int(f)
-        u = u * u * (3 - 2 * u) * 0.35 + u * 0.65          # gentle ease into every key
+        lin = min(1.0, max(0.0, (u - 0.18) / 0.64))          # hold each composition, then glide
+        u = lin * lin * lin * (lin * (6 * lin - 15) + 10)
+        sway = math.sin(lin * math.pi)                         # locked-off while holding
         P = [KEYS[(i + k) % n] for k in (-1, 0, 1, 2)]
 
         def cr(a, b, c, d):
@@ -1500,8 +1546,8 @@ class Mode:
 
         v = [cr(P[0][k], P[1][k], P[2][k], P[3][k]) for k in range(5)]
         cam = self.cam
-        cam.pos = [v[0] + 0.08 * math.sin(t * 0.7), v[1] + 0.05 * math.sin(t * 0.9), v[2]]
-        cam.yaw = v[3] + 0.015 * math.sin(t * 0.53)
+        cam.pos = [v[0] + 0.08 * sway * math.sin(t * 0.7), v[1] + 0.05 * sway * math.sin(t * 0.9), v[2]]
+        cam.yaw = v[3] + 0.015 * sway * math.sin(t * 0.53)
         cam.pitch = v[4]
         cam.setup()
         self.cam_label = KEYS[(i + (1 if u > 0.5 else 0)) % n][5]
@@ -1547,7 +1593,7 @@ class Mode:
         for seq, b in enumerate(self.static):
             c = b.center()
             items.append(((c[0] - px) ** 2 + (c[1] - py) ** 2 + (c[2] - pz) ** 2, seq, "box", b))
-        sprites = [((-7.75, 5.6, 12.45), "mask"), ((0.75, 1.0, 12.3), "plant1"), ((9.0, 1.0, 4.4), "plant2"),
+        sprites = [((-7.75, 5.6, 12.45), "mask"), ((0.9, 1.0, 12.3), "plant1"), ((9.0, 1.0, 4.4), "plant2"),
                    ((self.robot["x"], 0.5, 7.7), "robot")]
         if cat:
             sprites.append(((cat[0], cat[1] + 0.3, cat[2] - 0.2), "cat"))
@@ -1570,6 +1616,10 @@ class Mode:
                     self.printer(s, obj, now)
                 elif tag == "pizza":
                     self.pizza_top(s, obj, K)
+                elif tag == "mug" and random.random() < 0.12:
+                    q = cam.proj((obj.c[0], 1.72, obj.c[1]))
+                    if q:
+                        self.parts.add(q[0], q[1] / 2, random.uniform(-0.6, 0.6), -random.uniform(1.0, 2.0), 0.7, "·", (200, 200, 220))
                 elif tag == "lamp":
                     self.lamp_cone(s, now)
                 elif tag == "console" and int(now * 1.5) % 2:
@@ -1579,7 +1629,7 @@ class Mode:
             elif kind == "mask":
                 self.mask_sprite(s, now, K)
             elif kind == "plant1":
-                self.plant(s, 0.75, 12.0, 1.25, K, 0.05)
+                self.plant(s, 0.9, 12.3, 1.25, K, 0.05)
             elif kind == "plant2":
                 self.plant(s, 9.0, 4.4, 1.0, K)
             elif kind == "robot":

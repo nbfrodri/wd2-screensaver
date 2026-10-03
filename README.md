@@ -84,8 +84,7 @@ la línea de comandos se ejecuta aunque esté excluido de la rotación.
 Los cambios de configuración se aplican al volver a abrir el programa.
 
 `fps` es un objetivo, no una tasa garantizada: las escenas complejas y las
-terminales grandes pueden renderizar más despacio. Consulta las
-[mediciones actuales](docs/validation.md#rendimiento-medido).
+terminales grandes pueden renderizar más despacio.
 
 Las notificaciones se cuentan por archivos de historial, sin leer su contenido. El audio de salida se analiza en memoria para producir un espectro y no se graba. MPRIS aporta artista y título; el texto mostrado se sanea para eliminar controles, marcas combinantes y caracteres anchos. El tiempo consulta `wttr.in` y comparte con ese servicio la ubicación o coordenadas configuradas en el widget meteorológico de Omarchy; sin ubicación configurada solicita la ubicación predeterminada del servicio. El resultado meteorológico se guarda temporalmente en el directorio de ejecución. Puede desactivarse con `weather = false`.
 
@@ -117,13 +116,22 @@ Consulta [instalación y recuperación](docs/installation.md) para las copias de
 
 - [Instalación y recuperación](docs/installation.md): destinos, integración y copias de seguridad.
 - [Arquitectura](docs/architecture.md): motor, escenas, datos y reconstrucción del mapa de NUDLE.
-- [Diseño visual](docs/visuals.md): identidad de los 14 modos y limitaciones de legibilidad.
-- [Validación y rendimiento](docs/validation.md): pruebas, previsualizaciones y últimas mediciones.
 - [Instrucciones de mantenimiento](AGENTS.md): reglas para modificar y verificar el proyecto.
 
-La comprobación breve se ejecuta con `/usr/bin/python3 tools/verify.py`;
-añade `--full` para recorrer 80 segundos simulados por modo. Las instrucciones
-para crear capturas y medir rendimiento están en la guía de validación.
+### Comprobaciones
+
+Desde la raíz del repositorio, con el Python del sistema:
+
+```sh
+/usr/bin/python3 dedsec.py --list                        # los 14 modos
+/usr/bin/python3 tools/verify.py [--full] [--mode mode_x] # ejecución, anchos de celda y despedidas
+/usr/bin/python3 tools/snap.py mode_x 175 45 240          # ms por fotograma
+/usr/bin/python3 tools/preview.py --mode mode_x --times 3 15 30 --width 175 --height 45 --output /tmp/x.png
+```
+
+`verify` prueba 90×26, 175×45 y 240×60; `--full` recorre 80 segundos simulados.
+Son pruebas sin interfaz: las capturas PNG son aproximadas y no sustituyen ver
+el salvapantallas en la terminal real.
 
 ## Guardar futuras mejoras
 

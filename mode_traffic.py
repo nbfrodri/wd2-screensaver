@@ -25,8 +25,8 @@ CAR_COLS = [(168, 62, 63), (56, 113, 142), (191, 157, 79), (139, 146, 145), (92,
 GLASS = (35, 64, 77)
 TYRE = (17, 22, 25)
 HEAD = (239, 224, 165)
-STOP_V = -11.2          # car centre at the stop line (front stays off the zebra)
-HALF = 1.9              # car half length
+STOP_V = -11.6          # car centre at the stop line (front stays off the zebra)
+HALF = 2.1              # car half length
 BOLLARD_V = 15.0        # along lane (0, +1), after the junction
 WRECK_V = 20.6
 LIGHT = (0.25, 0.85, -0.45)
@@ -44,6 +44,8 @@ CAR_BOXES = [
 for _f in (-1.33, 1.33):
     for _s in (-.9, .9):
         CAR_BOXES.append((_f - .3, _f + .3, _s - .1, _s + .1, .05, .45, 'tyre'))
+# Moderately larger, same silhouette: stretch along the lane (f) only a little.
+CAR_BOXES = [(a * 1.1, b * 1.1, c, d, e, f, g) for a, b, c, d, e, f, g in CAR_BOXES]
 
 
 def _norm_shade(col, n):
@@ -232,8 +234,8 @@ class Mode:
         self.cid = 0
         for axis in (0, 1):
             for d in (-1, 1):
-                for i in range(3 if (axis + d) % 2 else 4):
-                    self.spawn((axis, d), -30 + i * 17 + axis * 4 + (d + 1) * 2.5, 5)
+                for i in range(2):
+                    self.spawn((axis, d), -26 + i * 24 + axis * 5 + (d + 1) * 2.5, 5)
         self.peds = []
         cross = [('z', 8), ('z', -8), ('x', 8), ('x', -8)]
         pal = [(214, 96, 70), (80, 160, 210), (226, 200, 96), (190, 110, 200), (90, 200, 130)]
@@ -256,6 +258,7 @@ class Mode:
         self.water = 0.0
         self.steam = 0.0
         self.flags = set()
+        self.calm = True
 
     def spawn(self, lane, v, sp, kind='car'):
         self.cid += 1
@@ -304,6 +307,7 @@ class Mode:
     def sim(self, dt, p, sig):
         name, _ = self.phase_of(p)
         chaos = name == 'CHAOS'
+        self.calm = not chaos
         by_lane = {}
         for c in self.cars:
             by_lane.setdefault(c['lane'], []).append(c)
@@ -419,7 +423,7 @@ class Mode:
                     continue
             keep.append(c)
         self.cars = keep
-        while sum(1 for c in self.cars if c['kind'] == 'car') < 13:
+        while sum(1 for c in self.cars if c['kind'] == 'car') < (8 if self.calm else 10):
             lanes = [(a, b) for a in (0, 1) for b in (-1, 1)]
             lane = min(lanes, key=lambda l: sum(1 for c in self.cars if c['lane'] == l))
             lm = min((o['v'] for o in self.cars if o['lane'] == lane), default=0)
@@ -448,19 +452,19 @@ class Mode:
             self.callout('INTRUSION // ctOS SIGNAL BUS', PINK, now)
         if once('green', 16):
             self.callout('ALL SIGNALS GREEN', GREEN, now)
-        if once('steam', 17.2):
+        if once('steam', 24.0):
             self.callout('STEAM MAIN VENTING', (190, 200, 205), now)
-        if once('victim', 17.9):
+        if once('victim', 19.6):
             # The front-most car still short of the bollard line takes the hit.
             cand = [c for c in self.cars if c['lane'] == (0, 1) and -30 < c['v'] < BOLLARD_V - HALF - .6 and c['kind'] == 'car']
             if not cand:
                 cand = [self.spawn((0, 1), -24.0, 9)]
             self.victim = max(cand, key=lambda c: c['v'])
-        if once('bollards', 18.0):
+        if once('bollards', 19.8):
             self.callout('BOLLARDS DEPLOYED', YELLOW, now)
-        if once('hydrant', 19.6):
+        if once('hydrant', 24.4):
             self.callout('HYDRANT BREACHED', CYAN, now)
-        if once('police', 20.5):
+        if once('police', 26.0):
             pc = self.spawn((0, -1), -37.0, 9, 'police')
             pc['vmax'] = 7.5
             pc['target'] = -21.5
@@ -479,11 +483,11 @@ class Mode:
             self.static = self.clean
             self.skids = []
         # Continuous props.
-        bt = 1.0 if 18 <= p < 29.5 else 0.0
+        bt = 1.0 if 19.8 <= p < 29.5 else 0.0
         self.bollard_h += (bt - self.bollard_h) * min(1, dt * (5 if bt else 2.5))
-        wt = 1.0 if 19.6 <= p < 30 else 0.0
+        wt = 1.0 if 24.4 <= p < 30 else 0.0
         self.water += (wt - self.water) * min(1, dt * (4 if wt else 1.2))
-        stt = 1.0 if 17.2 <= p < 31 else 0.0
+        stt = 1.0 if 24.0 <= p < 31 else 0.0
         self.steam += (stt - self.steam) * min(1, dt * (3 if stt else 1.0))
         # Victim: launch over the bollards, flip and land on its roof.
         vc = self.victim
@@ -493,14 +497,14 @@ class Mode:
                 vc['v0'] = vc['v']
                 self.stats['wreck'] += 1
                 self.callout('COLLISION // VEHICLE FLIPPED', ORANGE, now)
-                self.sparks(self.world((0, 1), BOLLARD_V), .5, 40)
+                self.sparks(self.world((0, 1), BOLLARD_V), .5, 22)
         if vc is not None and vc.get('flip') is not None:
             u = (now - vc['flip']) / 1.25
             if u >= 1:
                 self.cars = [c for c in self.cars if c is not vc]
                 self.wreck = {'col': vc['col'], 't': now}
                 self.victim = None
-                self.sparks(self.world((0, 1), WRECK_V), .3, 30)
+                self.sparks(self.world((0, 1), WRECK_V), .3, 16)
             elif self.rng.random() < .6:
                 x, z = self.world((0, 1), vc['v0'] + (WRECK_V - vc['v0']) * u)
                 self.sparks((x, z), .3, 4)
@@ -536,13 +540,13 @@ class Mode:
         if self.steam > .05:
             q = self.proj_px((self.MANHOLE[0], .1, self.MANHOLE[1]))
             if q:
-                for _ in range(int(self.steam * 30 * dt * 6) + 1):
+                for _ in range(int(self.steam * 14 * dt * 6) + 1):
                     P.append([q[0] + r.uniform(-1.5, 1.5), q[1], r.uniform(-2, 4) * k, -r.uniform(8, 16) * self.steam * k, 0.0,
                               r.uniform(1.0, 2.2), (150, 160, 168), -2.0, 'steam'])
-        if self.wreck is not None and r.random() < dt * 14:
+        if self.wreck is not None and r.random() < dt * 5:
             q = self.proj_px((WRECK_V, 1.0, -2.6))
             if q:
-                P.append([q[0] + r.uniform(-2, 2), q[1], r.uniform(-1, 2), -r.uniform(4, 8), 0.0, r.uniform(1.2, 2.4),
+                P.append([q[0] + r.uniform(-2, 2), q[1], r.uniform(-1, 2), -r.uniform(4, 8), 0.0, r.uniform(.8, 1.5),
                           (88, 92, 98), -1.0, 'steam'])
         if len(P) > 900:
             del P[:len(P) - 900]
@@ -566,10 +570,10 @@ class Mode:
             kind = p[8]
             if kind == 'steam':
                 base = s.get_pixel(x, py) or s.bg[py >> 1][x] or ASPHALT
-                c = blend(base, p[6], .55 * (1 - t))
+                c = blend(base, p[6], .32 * (1 - t))
                 s.pixel(x, py, c)
                 if t < .6:
-                    s.pixel(x + 1, py, blend(base, p[6], .35 * (1 - t)))
+                    s.pixel(x + 1, py, blend(base, p[6], .18 * (1 - t)))
             elif kind == 'water':
                 s.pixel(x, py, blend(p[6], (60, 90, 110), t * .7))
             else:
@@ -974,13 +978,17 @@ class Mode:
                 s.text(bx + 2, by + 1, text, WHITE)
 
     def bubbles_draw(self, s, now):
+        shown = 0
         for c in self.cars:
+            if shown >= 2:
+                break
             if c['honk'] > 0 and c.get('flip') is None and c['kind'] != 'police':
                 x, z = self.world(c['lane'], c['v'])
                 q = self.cam.project((x, 2.2, z))
                 if q:
                     bx, by = int(q[0]) - 1, int(q[1]) - 1
                     if 2 <= by < self.h - 2:
+                        shown += 1
                         txt = 'HONK' if (c['id'] + int(now)) % 5 == 0 and self.w >= 120 else '!!'
                         s.text(bx, by, txt, YELLOW if int(now * 6 + c['id']) % 2 else WHITE)
                         for k in range(len(txt)):

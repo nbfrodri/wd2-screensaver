@@ -1,6 +1,7 @@
 """PROFILER: ctOS citizen profiler over a night-time surveillance view of the city."""
 
 import math
+from types import SimpleNamespace
 import random
 import time
 
@@ -47,26 +48,29 @@ STATUS = [("CITIZEN", CYAN), ("HIGH RISK", PINK), ("BLUME ASSET", YELLOW), ("DED
 DISTRICTS = ["MISSION", "SOMA", "NOB HILL", "CHINATOWN", "TENDERLOIN", "MARINA"]
 
 # ---------------------------------------------------------------- city layout
-BLOCK, STREET = 8.0, 4.0
+BLOCK, STREET = 12.0, 6.0
 CELL = BLOCK + STREET
-SPAN = 5                      # blocks -SPAN..SPAN-1 on both axes; streets at k * CELL
+SPAN = 4                      # blocks -SPAN..SPAN-1 on both axes; streets at k * CELL
 EDGE = SPAN * CELL
 WALK = STREET / 2 + 0.55      # sidewalk lane offset from the street centre
 SETBACK = 1.2                 # sidewalk width inside the block
 
-SKY_TOP, SKY_LOW = (2, 4, 12), (30, 24, 54)
-GROUND_FAR = (7, 8, 15)
-HAZE = (20, 20, 40)
-ASPHALT, SIDEWALK, PARK = (9, 10, 17), (24, 27, 38), (12, 36, 24)
-MARK = (78, 70, 34)
-RIM = (80, 200, 225)
+SKY_TOP, SKY_LOW = (3, 6, 16), (20, 26, 52)
+GROUND_FAR = (8, 11, 22)
+HAZE = (22, 16, 46)
+ASPHALT, SIDEWALK, PARK = (3, 5, 10), (34, 42, 60), (12, 34, 28)
+MARK = (62, 60, 46)
+CROSS = (70, 76, 96)
+RIM = (96, 112, 150)
 PANEL_BG = (4, 7, 13)
 # wall (lit), roof per palette; faces are shaded from the lit colour
-PALETTES = [((62, 84, 118), (78, 100, 128)), ((74, 64, 108), (92, 82, 122)),
-            ((44, 90, 102), (62, 106, 116)), ((80, 78, 92), (98, 96, 110))]
-FACE_SHADE = (1.0, 0.55, 0.68, 0.84)         # faces -z, +z, -x, +x (moonlight from -z/+x)
-WIN_SCHEMES = [((190, 140, 70), (255, 214, 150)), ((90, 160, 205), (200, 240, 255)),
-               ((190, 140, 70), (120, 200, 240))]
+# dark night towers: indigo / slate walls, roofs only a little lighter
+PALETTES = [((40, 50, 88), (92, 104, 150)), ((48, 42, 84), (104, 94, 146)),
+            ((34, 54, 86), (84, 112, 150)), ((52, 48, 78), (110, 104, 140))]
+SHADOW = (0.22, 0.5)                          # shadow wall: darker + bluer than the lit wall
+WINDOW = (255, 204, 128)
+WIN_SCHEMES = [((190, 140, 70), (255, 214, 150)), ((200, 150, 80), (255, 226, 170)),
+               ((190, 140, 70), (150, 200, 235))]
 NEONS = [PINK, CYAN, (255, 120, 0), (170, 90, 255)]
 CAR_COLS = [(190, 40, 60), (60, 90, 150), (205, 205, 215), (60, 60, 72), (230, 170, 40), (40, 140, 120)]
 CLOTHES = [(220, 80, 100), (80, 150, 240), (230, 200, 90), (160, 160, 175), (90, 210, 150), (200, 120, 230)]
@@ -85,13 +89,13 @@ class Mode:
         self.tints = {}
         self.particles = Particles()
         self.last = time.time()
-        self.cam = Camera(w, h, fov=1.0)
-        self.cam.cx = w * 0.4 if w > 140 else w / 2
-        self.cam.cy = h * 0.58
+        self.cam = SimpleNamespace(cx=w * 0.4 if w > 140 else w * 0.3, cy=h * 0.58)
         self.district = random.choice(DISTRICTS)
         self.cam_no = random.randint(2, 48)
         self.colcache = {}
+        self.lrects = []
         self.build_city(random.Random(random.randint(0, 10 ** 6)))
+        self.bake_city()
         self.peds = [self.new_ped() for _ in range(64)]
         self.cars = [self.new_car() for _ in range(34)]
         self.reticles = [{"target": None, "x": w / 2, "y": h / 2, "lock": 0.0, "until": 0.0, "primary": i == 0}
@@ -102,6 +106,7 @@ class Mode:
         self.zoom = 0.0
         self.focus = [0.0, 0.0]
         self.orbit = random.uniform(0, math.tau)
+        self.view = [(self.Wc - w) / 2, (self.Hc - self.ph) / 2]
         self.card_rect = None
         self.link = None
         self.profile = None
@@ -114,57 +119,62 @@ class Mode:
         self.extras = {}         # box index -> dict(neon, beacon)
         self.trees = []
         self.blocks = []
-        parks = set(r.sample([(gx, gz) for gx in range(-SPAN, SPAN) for gz in range(-SPAN, SPAN)], 3))
+        parks = set(r.sample([(gx, gz) for gx in range(-SPAN, SPAN) for gz in range(-SPAN, SPAN)
+                              if max(abs(gx + 0.5), abs(gz + 0.5)) > 1.6], 2))
+        levels = (3.0, 4.5, 6.0, 8.5, 11.0, 13.5)
+        towers = 0
         for gx in range(-SPAN, SPAN):
             for gz in range(-SPAN, SPAN):
                 bx0, bz0 = gx * CELL + STREET / 2, gz * CELL + STREET / 2
                 park = (gx, gz) in parks
                 self.blocks.append((bx0, bz0, bx0 + BLOCK, bz0 + BLOCK, park))
                 if park:
-                    for _ in range(9):
-                        self.trees.append((bx0 + r.uniform(1.5, BLOCK - 1.5), bz0 + r.uniform(1.5, BLOCK - 1.5)))
+                    for tx in (0.3, 0.7):
+                        for tz in (0.3, 0.7):
+                            self.trees.append((bx0 + BLOCK * tx, bz0 + BLOCK * tz))
                     continue
                 ix0, iz0 = bx0 + SETBACK, bz0 + SETBACK
                 inner = BLOCK - 2 * SETBACK
-                layout = r.choice(("one", "one", "two_x", "two_z", "two_x", "two_z", "four"))
+                layout = r.choice(("one", "one", "one", "two_x", "two_z"))
                 if layout == "one":
                     lots = [(ix0, iz0, ix0 + inner, iz0 + inner)]
                 elif layout == "two_x":
-                    m = ix0 + inner * r.uniform(0.4, 0.6)
-                    lots = [(ix0, iz0, m - 0.3, iz0 + inner), (m + 0.3, iz0, ix0 + inner, iz0 + inner)]
-                elif layout == "two_z":
-                    m = iz0 + inner * r.uniform(0.4, 0.6)
-                    lots = [(ix0, iz0, ix0 + inner, m - 0.3), (ix0, m + 0.3, ix0 + inner, iz0 + inner)]
+                    m = ix0 + inner / 2
+                    lots = [(ix0, iz0, m - 0.5, iz0 + inner), (m + 0.5, iz0, ix0 + inner, iz0 + inner)]
                 else:
-                    mx, mz = ix0 + inner / 2, iz0 + inner / 2
-                    lots = [(ix0, iz0, mx - 0.3, mz - 0.3), (mx + 0.3, iz0, ix0 + inner, mz - 0.3),
-                            (ix0, mz + 0.3, mx - 0.3, iz0 + inner), (mx + 0.3, mz + 0.3, ix0 + inner, iz0 + inner)]
-                # downtown core in the middle, low-rise towards the edges where the camera flies
-                core = max(0.0, min(1.0, 1.2 - math.hypot(bx0 + BLOCK / 2, bz0 + BLOCK / 2) / 40))
+                    m = iz0 + inner / 2
+                    lots = [(ix0, iz0, ix0 + inner, m - 0.5), (ix0, m + 0.5, ix0 + inner, iz0 + inner)]
+                # downtown core in the middle, low-rise towards the edges
+                core = max(0.0, 1.0 - math.hypot(bx0 + BLOCK / 2, bz0 + BLOCK / 2) / 62)
                 for x0, z0, x1, z1 in lots:
-                    tower = r.random() < 0.28 * core
-                    hgt = r.uniform(11, 19) if tower else r.uniform(2.2, 3.5 + 7 * core)
+                    tower = layout == "one" and towers < 8 and r.random() < 0.75 * core
+                    if tower:
+                        towers += 1
+                    hgt = r.uniform(19, 28) if tower else r.choice(levels[:3 + (core > 0.3) + (core > 0.5) + (core > 0.7)])
                     pal = r.choice(PALETTES)
                     idx = len(self.boxes)
                     self.boxes.append((x0, z0, x1, z1, 0.0, hgt, pal[0], pal[1], -1))
-                    ex = {"scheme": r.choice(WIN_SCHEMES), "density": r.uniform(0.12, 0.42), "seed": r.random()}
-                    if r.random() < 0.18:
-                        ex["neon"] = (r.randrange(4), r.choice(NEONS), r.uniform(0.25, 0.75))
-                    if hgt > 11:
-                        ex["beacon"] = True
-                    self.extras[idx] = ex
-                    if hgt > 5 and r.random() < 0.3:
-                        cw, cd = (x1 - x0) * r.uniform(0.3, 0.5), (z1 - z0) * r.uniform(0.3, 0.5)
-                        ox, oz = x0 + r.uniform(0.2, x1 - x0 - cw - 0.2), z0 + r.uniform(0.2, z1 - z0 - cd - 0.2)
-                        self.boxes.append((ox, oz, ox + cw, oz + cd, hgt, hgt + r.uniform(0.8, 2.2),
-                                           blend(pal[0], BLACK, 0.15), pal[1], idx))
+                    self.extras[idx] = {"rows": r.random(), "seed": r.random(),
+                                        # roof-edge neon: always on towers, on some mid-rises
+                                        "neon": (r.choice(NEONS) if tower else
+                                                 blend(r.choice(NEONS), BLACK, 0.45) if hgt >= 8 and r.random() < 0.18
+                                                 else None)}
+                    if tower:
+                        self.extras[idx]["beacon"] = True
+                        # one setback crown + thin mast: recognisable skyscraper silhouette
+                        cx_, cz_ = (x0 + x1) / 2, (z0 + z1) / 2
+                        hw, hd = (x1 - x0) * 0.28, (z1 - z0) * 0.28
+                        self.boxes.append((cx_ - hw, cz_ - hd, cx_ + hw, cz_ + hd, hgt, hgt + 3.5,
+                                           pal[0], pal[1], idx))
+                        self.boxes.append((cx_ - 0.15, cz_ - 0.15, cx_ + 0.15, cz_ + 0.15, hgt + 3.5, hgt + 7.5,
+                                           (150, 150, 170), (200, 200, 220), idx))
         corners = []
         for x0, z0, x1, z1, y0, y1 in (b[:6] for b in self.boxes):
             corners.append(((x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1),
                             (x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)))
         self.corners = np.array(corners, dtype=float)
         self.block_quads = np.array([((a, 0, b), (c, 0, b), (c, 0, d), (a, 0, d)) for a, b, c, d, _ in self.blocks], dtype=float)
-        # window grid per face, one pixel each; drawn after the buildings with an id-buffer test
+        # window grid per face: regular rows/columns, whole floors lit or dark
         pts, owner, normal, cols = [], [], [], []
         for i, b in enumerate(self.boxes):
             if b[8] >= 0 or b[5] < 3.6:
@@ -176,15 +186,16 @@ class Mode:
                     ((x0 - 0.05, z1), (x0 - 0.05, z0), (-1, 0)), ((x1 + 0.05, z0), (x1 + 0.05, z1), (1, 0)))
             for (ax, az), (bx, bz), nrm in ends:
                 span = math.hypot(bx - ax, bz - az)
-                ncol = max(1, int((span - 0.6) / 1.35))
-                for fy in np.arange(1.3, y1 - 0.7, 1.7):
+                ncol = max(1, int(span / 2.4))
+                for fy in np.arange(1.6, y1 - 1.0, 2.2):
+                    if wr.random() < 0.55:
+                        continue
                     for c in range(ncol):
-                        if wr.random() < ex["density"]:
-                            t = (c + 0.5) / ncol
-                            pts.append((ax + (bx - ax) * t, fy, az + (bz - az) * t))
-                            owner.append(i)
-                            normal.append(nrm)
-                            cols.append(ex["scheme"][wr.random() < 0.3])
+                        t = (c + 0.5) / ncol
+                        pts.append((ax + (bx - ax) * t, fy, az + (bz - az) * t))
+                        owner.append(i)
+                        normal.append(nrm)
+                        cols.append(WINDOW)
         self.win_pts = np.array(pts, dtype=float).reshape(-1, 3)
         self.win_owner = np.array(owner, dtype=int)
         self.win_normal = np.array(normal, dtype=float).reshape(-1, 2)
@@ -193,20 +204,26 @@ class Mode:
         marks = []
         for k in range(-SPAN, SPAN + 1):
             for v in np.arange(-EDGE, EDGE, 0.5):
-                if abs((v + CELL / 2) % CELL - CELL / 2) > STREET / 2 + 0.4 and v % 2.0 < 1.0:
+                if abs((v + CELL / 2) % CELL - CELL / 2) > STREET / 2 + 0.4 and v % 3.0 < 1.5:
                     marks.append((k * CELL, 0.0, v))
                     marks.append((v, 0.0, k * CELL))
         self.marks = np.array(marks, dtype=float)
-        sub, scol = [], []
-        sr = random.Random(11)
-        while len(sub) < 450:
-            x, z = sr.uniform(-EDGE - 70, EDGE + 70), sr.uniform(-EDGE - 70, EDGE + 70)
-            if max(abs(x), abs(z)) > EDGE + 3:
-                sub.append((x, sr.uniform(0.5, 3), z))
-                scol.append(sr.choice(((150, 110, 60), (110, 80, 50), (80, 110, 140))))
-        self.suburbs, self.suburb_cols = np.array(sub, dtype=float), np.array(scol, dtype=float)
+        cw = []
+        for k in range(-SPAN, SPAN + 1):
+            for m in range(-SPAN, SPAN + 1):
+                cx0, cz0 = k * CELL, m * CELL
+                for off in (STREET / 2 + 0.5, -STREET / 2 - 0.5):
+                    for u in np.arange(-STREET / 2 + 0.4, STREET / 2, 0.55):
+                        cw.append((cx0 + u, 0.0, cz0 + off))
+                        cw.append((cx0 + off, 0.0, cz0 + u))
+        self.cross = np.array(cw, dtype=float)
         self.lamps = [(k * CELL + WALK - 0.3, m * CELL + WALK - 0.3)
                       for k in range(-SPAN, SPAN + 1) for m in range(-SPAN, SPAN + 1)]
+        mid = CELL / 2
+        for k in range(-SPAN, SPAN):
+            for m in range(-SPAN, SPAN + 1):
+                self.lamps.append((k * CELL + mid, m * CELL + WALK - 0.3))
+                self.lamps.append((m * CELL + WALK - 0.3, k * CELL + mid))
         self.lamp_pts = np.array([(x, 3.2, z) for x, z in self.lamps], dtype=float)
         # distant skyline ring
         rr = random.Random(7)
@@ -216,8 +233,8 @@ class Mode:
             if rr.random() < 0.12:
                 hgt = rr.choice((1.5, 2.5, 3.5, 5, 6.5, 9)) if rr.random() < 0.9 else rr.uniform(12, 18)
             self.skyline.append(hgt)
-        self.sky_lights = {i: rr.random() for i in range(720) if rr.random() < 0.2}
-        self.stars = [(rr.uniform(0, math.tau), rr.uniform(0.02, 0.5), rr.random()) for _ in range(70)]
+        self.sky_lights = {}
+        self.stars = [(rr.uniform(0, math.tau), rr.uniform(0.02, 0.5), rr.random()) for _ in range(40)]
 
     def build_minimap(self):
         self.mm = None
@@ -260,7 +277,7 @@ class Mode:
         k = random.randint(-SPAN + 1, SPAN - 1)
         d = random.choice((-1, 1))
         # right-hand traffic: the lane side follows the driving direction
-        lane = k * CELL + (1.0 * d if along_x else -1.0 * d)
+        lane = k * CELL + (1.3 * d if along_x else -1.3 * d)
         return {"ax": along_x, "lane": lane, "dir": d, "pos": random.uniform(-EDGE, EDGE),
                 "v": random.uniform(5.5, 8.5), "spd": 0.0, "col": random.choice(CAR_COLS), "screen": None}
 
@@ -268,295 +285,6 @@ class Mode:
     def world(o, y=0.0):
         return (o["pos"], y, o["lane"]) if o["ax"] else (o["lane"], y, o["pos"])
 
-    def fog(self, col, z):
-        q = max(0, min(12, int((z - 28) / 7)))
-        key = (col, q)
-        c = self.colcache.get(key)
-        if c is None:
-            c = blend(col, HAZE, q / 12 * 0.8)
-            if len(self.colcache) > 8000:
-                self.colcache.clear()
-            self.colcache[key] = c
-        return c
-
-    def view_np(self, P):
-        cam = self.cam
-        cy_, sy_ = math.cos(-cam.yaw), math.sin(-cam.yaw)
-        cp, sp = math.cos(-cam.pitch), math.sin(-cam.pitch)
-        x, y, z = P[..., 0] - cam.pos[0], P[..., 1] - cam.pos[1], P[..., 2] - cam.pos[2]
-        x, z = x * cy_ + z * sy_, -x * sy_ + z * cy_
-        y, z = y * cp - z * sp, y * sp + z * cp
-        return x, y, z
-
-    def proj_np(self, P):
-        vx, vy, vz = self.view_np(P)
-        zc = np.maximum(vz, NEAR)
-        cam = self.cam
-        return cam.cx + vx / zc * cam.f * 2, (cam.cy - vy / zc * cam.f) * 2, vz
-
-    def to_px(self, v):
-        cam = self.cam
-        return cam.cx + v[0] / v[2] * cam.f * 2, (cam.cy - v[1] / v[2] * cam.f) * 2
-
-    def poly(self, vpts, col, bid=None):
-        """Clip a view-space polygon to the near plane and fill it in pixel space."""
-        if min(v[2] for v in vpts) < NEAR:
-            out = []
-            n = len(vpts)
-            for i in range(n):
-                a, b = vpts[i], vpts[(i + 1) % n]
-                if a[2] >= NEAR:
-                    out.append(a)
-                if (a[2] >= NEAR) != (b[2] >= NEAR):
-                    t = (NEAR - a[2]) / (b[2] - a[2])
-                    out.append(tuple(a[j] + (b[j] - a[j]) * t for j in range(3)))
-            if len(out) < 3:
-                return
-            vpts = out
-        self.fill([self.to_px(v) for v in vpts], col, bid)
-
-    def fill(self, pts, col, bid=None):
-        ys = [p[1] for p in pts]
-        y0, y1 = max(0, int(min(ys) + 0.5)), min(self.ph - 1, int(max(ys) - 0.5))
-        if y0 > y1:
-            return
-        edges = []
-        n = len(pts)
-        for i in range(n):
-            ax, ay = pts[i]
-            bx, by = pts[i - 1]
-            if ay == by:
-                continue
-            if ay > by:
-                ax, ay, bx, by = bx, by, ax, ay
-            edges.append((ay, by, ax, (bx - ax) / (by - ay)))
-        rows, ids, w = self.rows, self.ids, self.w
-        for py in range(y0, y1 + 1):
-            yc = py + 0.5
-            lo, hi = 1e9, -1e9
-            for ay, by, ax, k in edges:
-                if ay <= yc < by:
-                    x = ax + (yc - ay) * k
-                    if x < lo:
-                        lo = x
-                    if x > hi:
-                        hi = x
-            xa, xb = max(0, int(lo + 0.5)), min(w, int(hi + 0.5))
-            if xb > xa:
-                rows[py][xa:xb] = [col] * (xb - xa)
-                if bid is not None:
-                    ids[py][xa:xb] = [bid] * (xb - xa)
-
-    def pline(self, a, b, col):
-        rows, w, ph = self.rows, self.w, self.ph
-        for x, y in line_points(int(a[0]), int(a[1]), int(b[0]), int(b[1])):
-            if 0 <= x < w and 0 <= y < ph:
-                rows[y][x] = col
-
-    def seg(self, a, b, col):
-        """Near-clipped world line in pixel space, fogged by its midpoint."""
-        cam = self.cam
-        va, vb = cam.to_view(a), cam.to_view(b)
-        if va[2] < NEAR and vb[2] < NEAR:
-            return
-        if va[2] < NEAR or vb[2] < NEAR:
-            if va[2] < NEAR:
-                va, vb = vb, va
-            k = (va[2] - NEAR) / (va[2] - vb[2])
-            vb = tuple(va[i] + (vb[i] - va[i]) * k for i in range(3))
-        pa, pb = self.to_px(va), self.to_px(vb)
-        if max(pa[0], pb[0]) < 0 or min(pa[0], pb[0]) >= self.w or max(pa[1], pb[1]) < 0 or min(pa[1], pb[1]) >= self.ph:
-            return
-        from engine3d import clip2d
-        c = clip2d(pa[0], pa[1], pb[0], pb[1], self.w, self.ph)
-        if not c:
-            return
-        (t0, t1), dx, dy = c, pb[0] - pa[0], pb[1] - pa[1]
-        self.pline((pa[0] + dx * t0, pa[1] + dy * t0), (pa[0] + dx * t1, pa[1] + dy * t1), col)
-
-    def dot(self, x, py, col):
-        if 0 <= x < self.w and 0 <= py < self.ph:
-            self.rows[py][x] = col
-
-    # ------------------------------------------------------------ static scene (refreshed at 12 Hz)
-    def draw_world(self, s, now):
-        cam, w, h = self.cam, self.w, self.h
-        self.rows = [layer[py >> 1] for py in range(self.ph) for layer in ((s.pt, s.pb)[py & 1],)]
-        self.ids = [[-1] * w for _ in range(self.ph)]
-        # sky, stars, moon and distant skyline
-        horizon = (cam.cy - math.tan(cam.pitch) * cam.f) * 2
-        hrow = int(horizon / 2)
-        for y in range(h):
-            s.bg[y] = [blend(SKY_TOP, SKY_LOW, (y + 1) / max(1, hrow + 1)) if y <= hrow else GROUND_FAR] * w
-        for az, el, tw in self.stars:
-            dx = math.atan2(math.sin(az - cam.yaw), math.cos(az - cam.yaw))
-            if abs(dx) < 1.3:
-                x = int(cam.cx + math.tan(dx) * cam.f * 2)
-                py = int(horizon - math.tan(el) * cam.f * 2 * 1.4)
-                if 0 <= py < horizon - 3:
-                    self.dot(x, py, blend((90, 90, 130), WHITE, tw * (0.6 + 0.4 * math.sin(now * 2 + tw * 9))))
-        dx = math.atan2(math.sin(2.2 - cam.yaw), math.cos(2.2 - cam.yaw))
-        if abs(dx) < 1.2:
-            mx, my = cam.cx + math.tan(dx) * cam.f * 2, horizon - cam.f * 0.55
-            for py in range(int(my) - 3, int(my) + 4):
-                for x in range(int(mx) - 3, int(mx) + 4):
-                    d = math.hypot(x - mx, py - my)
-                    if d < 2.6 and py < horizon:
-                        self.dot(x, py, blend((250, 240, 215), (150, 150, 170), max(0, (x - mx) / 3)))
-        for x in range(w):
-            az = cam.yaw + math.atan((x - cam.cx) / (cam.f * 2))
-            i = int(az / math.tau * 720) % 720
-            hp = int(self.skyline[i] / 140 * cam.f * 2 * 1.4)
-            col = (14, 14, 30) if self.skyline[i] < 10 else (20, 20, 40)
-            for py in range(int(horizon) - hp, int(horizon) + 1):
-                self.dot(x, py, col)
-            if i in self.sky_lights and hp > 2:
-                self.dot(x, int(horizon) - int(hp * self.sky_lights[i]) - 1, (120, 90, 50))
-        # ground: city slab, blocks, markings and lamp pools
-        V = lambda p: tuple(float(c) for c in self.view_np(np.array(p, dtype=float)))
-        # outskirts: dim street grid and scattered house lights beyond the downtown slab
-        far = EDGE + 70
-        for k in range(-SPAN - 5, SPAN + 6, 2):
-            v = k * CELL
-            for a, b in (((v, 0, -far), (v, 0, far)), ((-far, 0, v), (far, 0, v))):
-                self.seg(a, b, (22, 24, 40))
-        self.splat(self.suburbs, self.suburb_cols)
-        e = EDGE + STREET / 2
-        self.poly([V((-e, 0, -e)), V((e, 0, -e)), V((e, 0, e)), V((-e, 0, e))], ASPHALT)
-        BX, BY, BZ = self.view_np(self.block_quads)
-        bsx = cam.cx + BX / np.maximum(BZ, NEAR) * cam.f * 2
-        bsy = (cam.cy - BY / np.maximum(BZ, NEAR) * cam.f) * 2
-        bkeep = (BZ.max(axis=1) > NEAR) & (bsx.max(axis=1) >= 0) & (bsx.min(axis=1) < w) & (bsy.max(axis=1) >= 0) & (bsy.min(axis=1) < self.ph)
-        BXl, BYl, BZl, BC = BX.tolist(), BY.tolist(), BZ.tolist(), BZ.mean(axis=1).tolist()
-        bfast = (BZ.min(axis=1) > NEAR).tolist()
-        bsxl, bsyl = bsx.tolist(), bsy.tolist()
-        for i in np.nonzero(bkeep)[0].tolist():
-            col = self.fog(PARK if self.blocks[i][4] else SIDEWALK, BC[i])
-            if bfast[i]:
-                self.fill(list(zip(bsxl[i], bsyl[i])), col)
-            else:
-                self.poly(list(zip(BXl[i], BYl[i], BZl[i])), col)
-        self.splat(self.marks, np.array(MARK, dtype=float), self.view_np(self.marks)[2] < 60)
-        # buildings, painter's order
-        VX, VY, VZ = self.view_np(self.corners)
-        SX = cam.cx + VX / np.maximum(VZ, NEAR) * cam.f * 2
-        SY = (cam.cy - VY / np.maximum(VZ, NEAR) * cam.f) * 2
-        keep = (VZ.max(axis=1) > NEAR) & (SX.max(axis=1) >= 0) & (SX.min(axis=1) < w) & (SY.max(axis=1) >= 0) & (SY.min(axis=1) < self.ph)
-        ZC = VZ.mean(axis=1)
-        self.bdepth = ZC.tolist()
-        px, py_, pz = cam.pos
-        order = []
-        for i in np.nonzero(keep)[0].tolist():
-            b = self.boxes[i]
-            root = i if b[8] < 0 else b[8]
-            rb = self.boxes[root]
-            d = ((rb[0] + rb[2]) / 2 - px) ** 2 + ((rb[1] + rb[3]) / 2 - pz) ** 2
-            order.append((-d, i != root, i))
-        order.sort()
-        VXl, VYl, VZl = VX.tolist(), VY.tolist(), VZ.tolist()
-        SXl, SYl = SX.tolist(), SY.tolist()
-        beacons = []
-        FAST = (VZ.min(axis=1) > NEAR).tolist()
-        for _, _, i in order:
-            x0, z0, x1, z1, y0, y1, wall, roof, parent = self.boxes[i]
-            fast = FAST[i]
-            vs = list(zip(SXl[i], SYl[i])) if fast else list(zip(VXl[i], VYl[i], VZl[i]))
-            draw = self.fill if fast else self.poly
-            zc = ZC[i]
-            vis = (pz < z0, pz > z1, px < x0, px > x1)
-            root = i if parent < 0 else parent
-            for fi in range(4):
-                if not vis[fi]:
-                    continue
-                f = FACES[fi]
-                draw([vs[j] for j in f], self.facecol(wall, fi, zc), root)
-                if parent < 0 and zc < 75:
-                    neon = self.extras[i].get("neon")
-                    if neon and neon[0] == fi:
-                        ax, az, bx, bz = ((x0, z0, x1, z0), (x1, z1, x0, z1), (x0, z1, x0, z0), (x1, z0, x1, z1))[fi]
-                        t = neon[2]
-                        nx, nz = ax + (bx - ax) * t, az + (bz - az) * t
-                        q0, q1 = cam.project((nx, 1.2, nz)), cam.project((nx, min(y1 - 0.5, 6.5), nz))
-                        if q0 and q1 and (int(now * 1.3 + i) % 7):
-                            self.pline((q0[0], q0[1] * 2), (q1[0], q1[1] * 2), neon[1])
-            if fast or vs[4][2] > NEAR:
-                draw([vs[4], vs[5], vs[6], vs[7]], self.fog(roof, zc), root)
-            # silhouette: roof rim plus the corner edge facing the camera
-            if fast and zc < 110:
-                rim = self.fog(blend(RIM, BLACK, 0.25 if parent < 0 else 0.5), zc + 10)
-                for a, b in ((4, 5), (5, 6), (6, 7), (7, 4)):
-                    self.pline((SXl[i][a], SYl[i][a]), (SXl[i][b], SYl[i][b]), rim)
-                c = None
-                if vis[0] and vis[2]:
-                    c = 0
-                elif vis[0] and vis[3]:
-                    c = 1
-                elif vis[1] and vis[3]:
-                    c = 2
-                elif vis[1] and vis[2]:
-                    c = 3
-                if c is not None and parent < 0:
-                    self.pline((SXl[i][c], SYl[i][c]), (SXl[i][c + 4], SYl[i][c + 4]), self.fog(blend(RIM, BLACK, 0.55), zc + 10))
-            if parent < 0 and self.extras[i].get("beacon"):
-                beacons.append(((x0 + x1) / 2, y1 + 0.4, (z0 + z1) / 2))
-        self.beacons = beacons
-        if len(self.win_pts):
-            ids = np.array(self.ids)
-            facing = ((px - self.win_pts[:, 0]) * self.win_normal[:, 0] + (pz - self.win_pts[:, 2]) * self.win_normal[:, 1]) > 0
-            self.splat(self.win_pts, self.win_col, facing, ids=ids, owner=self.win_owner, bias=-6)
-        # trees in parks (low, drawn with occlusion)
-        for tx, tz in self.trees:
-            self.occluded_blob(tx, tz)
-        # street lamps
-        X, PY, Z = self.proj_np(self.lamp_pts)
-        for x, py, z in zip(X.astype(int).tolist(), PY.astype(int).tolist(), Z.tolist()):
-            if NEAR < z < 48 and not self.hidden(x, py, z):
-                self.dot(x, py, self.fog((230, 200, 150), z))
-
-    def facecol(self, wall, fi, z):
-        q = max(0, min(12, int((z - 28) / 7)))
-        key = (wall, fi, q)
-        c = self.colcache.get(key)
-        if c is None:
-            c = self.colcache[key] = blend(blend(wall, BLACK, 1 - FACE_SHADE[fi]), HAZE, q / 12 * 0.8)
-        return c
-
-    def splat(self, P, rgb, extra=None, ids=None, owner=None, bias=0.0):
-        """Vectorised projection + fog of single-pixel lights; optional id-buffer visibility."""
-        X, PY, Z = self.proj_np(P)
-        xi, yi = X.astype(int), PY.astype(int)
-        m = (Z > NEAR) & (xi >= 0) & (xi < self.w) & (yi >= 0) & (yi < self.ph)
-        if extra is not None:
-            m &= extra
-        if ids is not None:
-            m[m] &= ids[yi[m], xi[m]] == owner[m]
-        if not m.any():
-            return
-        k = np.clip((Z[m] + bias - 28) / 84, 0, 0.8)[:, None]
-        base = rgb[m] if rgb.ndim == 2 else rgb[None, :]
-        col = (base * (1 - k) + np.array(HAZE, dtype=float) * k).astype(int).tolist()
-        rows = self.rows
-        for x, y, c in zip(xi[m].tolist(), yi[m].tolist(), col):
-            rows[y][x] = tuple(c)
-
-    def hidden(self, x, py, z):
-        if 0 <= x < self.w and 0 <= py < self.ph:
-            b = self.ids[py][x]
-            return b >= 0 and self.bdepth[b] < z - 0.5
-        return True
-
-    def occluded_blob(self, tx, tz):
-        q = self.cam.project((tx, 1.3, tz))
-        if not q:
-            return
-        x, py, z = int(q[0]), int(q[1] * 2), q[2]
-        if self.hidden(x, py, z):
-            return
-        dark, light = self.fog((20, 70, 40), z), self.fog((40, 110, 60), z)
-        for dx, dy, c in ((0, 0, dark), (-1, 0, dark), (1, 0, dark), (0, -1, light), (0, 1, (40, 30, 24))):
-            self.dot(x + dx, py + dy, c)
-
-    # ------------------------------------------------------------ moving things
     def update_traffic(self, now, dt):
         green_x = lambda k, m: int(now / 4 + k * 0.5 + m * 0.5) % 2 == 0
         lanes = {}
@@ -590,82 +318,280 @@ class Mode:
                 p["v"] = -p["v"]
                 p["pos"] = math.copysign(EDGE, p["pos"])
 
-    def draw_traffic(self, s, now):
-        cam = self.cam
-        rows = self.rows
-        for c in self.cars:
-            d = c["dir"]
-            fwd = (d, 0) if c["ax"] else (0, d)
-            x, _, z = self.world(c)
-            f = cam.project((x + fwd[0] * 1.0, 0.45, z + fwd[1] * 1.0))
-            b = cam.project((x - fwd[0] * 1.0, 0.45, z - fwd[1] * 1.0))
-            if not f or not b:
-                c["screen"] = None
-                continue
-            c["screen"] = f
-            fx, fy, bx, by = int(f[0]), int(f[1] * 2), int(b[0]), int(b[1] * 2)
-            hid = self.hidden(fx, fy, f[2]) and self.hidden(bx, by, b[2])
-            if hid:
-                continue
-            for k in (2.2, 3.4):
-                q = cam.project((x + fwd[0] * k, 0.0, z + fwd[1] * k))
-                if q and not self.hidden(int(q[0]), int(q[1] * 2), q[2]):
-                    self.dot(int(q[0]), int(q[1] * 2), self.fog((120, 110, 70) if k < 3 else (70, 64, 46), q[2]))
-            self.pline((bx, by), (fx, fy), self.fog(c["col"], f[2]))
-            self.dot(fx, fy, (255, 250, 225))
-            self.dot(bx, by, (255, 40, 50) if c["spd"] > c["v"] * 0.3 else (255, 90, 90))
-        for p in self.peds:
-            x, _, z = self.world(p)
-            foot = cam.project((x, 0.0, z))
-            head = cam.project((x, 1.9, z))
-            if not foot or not head:
-                p["screen"] = None
-                continue
-            hx, hy, fy = int(head[0]), int(head[1] * 2), int(foot[1] * 2)
-            p["screen"] = (head[0], (head[1] + foot[1]) / 2, foot[2])
-            if not (0 <= hx < self.w and 0 <= hy < self.ph):
-                continue
-            hid = self.hidden(hx, max(hy, fy - 1), foot[2])
-            p["hidden"] = hid
-            body = XRAY if hid else self.fog(p["body"], foot[2])
-            for yy in range(hy + 1, max(hy + 2, fy + 1)):
-                self.dot(hx, yy, body)
-            self.dot(hx, hy, blend(XRAY, WHITE, 0.2) if hid else self.fog(SKIN, foot[2]))
-        # signals and roof beacons
+    # ------------------------------------------------------------ isometric city
+    # The city is baked once into a large pixel-art canvas seen from a fixed
+    # isometric angle (x runs right-down, z left-down, y up). Each frame the view
+    # pans across it; cars, people and lights are drawn on top with occlusion.
+
+    def iso(self, x, y, z):
+        """World -> canvas pixel (float)."""
+        K = self.K
+        return self.iox + (x - z) * K, self.ioy + (x + z) * K * 0.5 - y * K * 0.82
+
+    def bake_city(self):
+        K = self.K = 1.6 if self.w >= 150 else 1.25
+        lim = EDGE + 3
+        self.iox = lim * K + 4
+        self.ioy = 30 * K * 0.82 + 6
+        Wc = int(2 * lim * K + 8)
+        Hc = int(self.ioy + 2 * lim * K * 0.5 + 6)
+        self.Wc, self.Hc = Wc, Hc
+        img = np.zeros((Hc, Wc, 3), np.float32)
+        img[:] = (20, 22, 34)                               # asphalt
+        key = np.full((Hc, Wc), -1e9, np.float32)          # depth key of building pixels
+        self._img, self._key = img, key
+
+        def poly(pts, col, k=None):
+            ys = [p[1] for p in pts]
+            y0, y1 = max(0, int(math.floor(min(ys)))), min(Hc - 1, int(math.ceil(max(ys))))
+            n = len(pts)
+            for y in range(y0, y1 + 1):
+                yc = y + 0.5
+                xs = []
+                for i in range(n):
+                    ax, ay = pts[i]
+                    bx, by = pts[(i + 1) % n]
+                    if (ay <= yc < by) or (by <= yc < ay):
+                        xs.append(ax + (yc - ay) / (by - ay) * (bx - ax))
+                if len(xs) >= 2:
+                    xa, xb = max(0, int(round(min(xs)))), min(Wc - 1, int(round(max(xs))) - 1)
+                    if xb >= xa:
+                        img[y, xa:xb + 1] = col
+                        if k is not None:
+                            key[y, xa:xb + 1] = k
+
+        def px(x, y, col):
+            xi, yi = int(round(x)), int(round(y))
+            if 0 <= xi < Wc and 0 <= yi < Hc:
+                img[yi, xi] = col
+
+        def seg(a, b, col):
+            for x, y in line_points(int(round(a[0])), int(round(a[1])), int(round(b[0])), int(round(b[1]))):
+                if 0 <= x < Wc and 0 <= y < Hc:
+                    img[y, x] = col
+
+        iso = self.iso
+        # --- ground: blocks (sidewalk ring), parks, streets with markings
+        for bx0, bz0, bx1, bz1, park in self.blocks:
+            corners = [iso(bx0, 0, bz0), iso(bx1, 0, bz0), iso(bx1, 0, bz1), iso(bx0, 0, bz1)]
+            poly(corners, (52, 56, 76))                     # sidewalk ring
+            inner = [iso(bx0 + 0.6, 0, bz0 + 0.6), iso(bx1 - 0.6, 0, bz0 + 0.6),
+                     iso(bx1 - 0.6, 0, bz1 - 0.6), iso(bx0 + 0.6, 0, bz1 - 0.6)]
+            poly(inner, (22, 60, 40) if park else (30, 32, 48))
+        for k in range(-SPAN, SPAN + 1):
+            c = k * CELL
+            for t in np.arange(-EDGE, EDGE, 2.4):
+                if abs(((t + CELL / 2) % CELL) - CELL / 2) < STREET / 2 + 0.3:
+                    continue                                   # no dashes inside crossings
+                seg(iso(c, 0, t), iso(c, 0, t + 1.1), (120, 110, 70))
+                seg(iso(t, 0, c), iso(t + 1.1, 0, c), (120, 110, 70))
         for k in range(-SPAN, SPAN + 1):
             for m in range(-SPAN, SPAN + 1):
-                q = cam.project((k * CELL - WALK + 0.3, 2.4, m * CELL - WALK + 0.3))
-                if q and q[2] < 42 and not self.hidden(int(q[0]), int(q[1] * 2), q[2]):
-                    gx = int(now / 4 + k * 0.5 + m * 0.5) % 2 == 0
-                    self.dot(int(q[0]), int(q[1] * 2), (60, 255, 120) if gx else (255, 50, 60))
-        if int(now * 1.5) % 2:
-            for bpos in self.beacons:
-                q = cam.project(bpos)
-                if q:
-                    self.dot(int(q[0]), int(q[1] * 2), (255, 40, 40))
+                cx_, cz_ = k * CELL, m * CELL
+                for i in range(-2, 3):                         # zebra crossings
+                    o = i * 1.0
+                    for dz in (-STREET / 2 - 0.2, STREET / 2 + 0.2):
+                        seg(iso(cx_ + o - 0.25, 0, cz_ + dz), iso(cx_ + o + 0.25, 0, cz_ + dz), (96, 102, 124))
+                    for dx in (-STREET / 2 - 0.2, STREET / 2 + 0.2):
+                        seg(iso(cx_ + dx, 0, cz_ + o - 0.25), iso(cx_ + dx, 0, cz_ + o + 0.25), (96, 102, 124))
+        # trees
+        for tx, tz in self.trees:
+            gx, gy = iso(tx, 0, tz)
+            for dy in range(-int(3 * K), 1):
+                for dx in range(-int(2 * K), int(2 * K) + 1):
+                    if dx * dx / (2 * K) ** 2 + (dy + 1.5 * K) ** 2 / (1.6 * K) ** 2 <= 1:
+                        lit = dx < 0 and dy < -1.5 * K
+                        px(gx + dx, gy + dy, (38, 92, 56) if lit else (20, 58, 38))
+        # street lamp pools
+        for p in self.lamp_pts:
+            gx, gy = iso(p[0], 0, p[2])
+            for dy in range(-2, 3):
+                for dx in range(-4, 5):
+                    d = (dx / 4.0) ** 2 + (dy / 2.0) ** 2
+                    if d < 1:
+                        xi, yi = int(gx + dx), int(gy + dy)
+                        if 0 <= xi < Wc and 0 <= yi < Hc:
+                            img[yi, xi] = img[yi, xi] + (np.array((255, 190, 110), np.float32) - img[yi, xi]) * 0.32 * (1 - d)
 
-    # ------------------------------------------------------------ camera
-    def update_camera(self, now, dt):
+        # --- buildings, painter's order (far to near)
+        order = sorted(range(len(self.boxes)), key=lambda i: (self.boxes[i][2] + self.boxes[i][3], self.boxes[i][4]))
+        rng = random.Random(11)
+        self.win_lights = []
+        for i in order:
+            x0, z0, x1, z1, y0, y1, wall, roof, parent = self.boxes[i]
+            root = i if parent < 0 else parent
+            ex = self.extras.get(root, {})
+            kf = x1 + z1
+            lit = blend(wall, WHITE, 0.10)
+            shade = blend(blend(wall, (6, 8, 30), 0.45), BLACK, 0.45)
+            # left face (z = z1) is lit, right face (x = x1) in shadow
+            fl = [iso(x0, y0, z1), iso(x1, y0, z1), iso(x1, y1, z1), iso(x0, y1, z1)]
+            fr = [iso(x1, y0, z1), iso(x1, y0, z0), iso(x1, y1, z0), iso(x1, y1, z1)]
+            top = [iso(x0, y1, z0), iso(x1, y1, z0), iso(x1, y1, z1), iso(x0, y1, z1)]
+            poly(fl, lit, kf)
+            poly(fr, shade, kf)
+            poly(top, roof, kf)
+            # windows: neat floor rows on both walls
+            if parent < 0 and y1 - y0 > 2.5:
+                warm = rng.choice(((255, 200, 120), (255, 214, 150), (255, 190, 110), (190, 220, 255)))
+                for face, (ax, az, bx, bz) in ((0, (x0, z1, x1, z1)), (1, (x1, z1, x1, z0))):
+                    span = math.hypot(bx - ax, bz - az)
+                    ncol = max(1, int(span / 1.45))
+                    floor = y0 + 1.0
+                    while floor < y1 - 0.9:
+                        on_floor = rng.random() < 0.55
+                        for j in range(ncol):
+                            t = (j + 0.5) / ncol
+                            wx, wz = ax + (bx - ax) * t, az + (bz - az) * t
+                            p = iso(wx, floor, wz)
+                            on = on_floor and rng.random() < 0.8
+                            col = warm if on else (blend(lit, BLACK, 0.45) if face == 0 else blend(shade, BLACK, 0.3))
+                            if on and face == 1:
+                                col = blend(warm, BLACK, 0.25)
+                            px(p[0], p[1], col)
+                            if K >= 2.0:
+                                px(p[0], p[1] - 1, col)
+                            if on:
+                                self.win_lights.append((int(round(p[0])), int(round(p[1])), col))
+                        floor += 1.5
+            # outlines: dark ink on the silhouette, a light rim on the roof's back edges
+            ink = (4, 4, 12)
+            for a, b in ((fl[0], fl[3]), (fr[1], fr[2])):
+                seg(a, b, ink)
+            seg(top[0], top[1], blend(roof, WHITE, 0.35))
+            seg(top[0], top[3], blend(roof, WHITE, 0.35))
+            seg(top[1], top[2], ink)
+            seg(top[3], top[2], ink)
+            seg(fl[2], fl[1], blend(lit, WHITE, 0.25))                # lit corner edge
+            neon = ex.get("neon") if ex.get("beacon") and parent < 0 else None
+            if neon:
+                seg(top[3], top[2], neon)
+                seg(top[2], top[1], neon)
+            # rooftop clutter on low buildings
+            if parent < 0 and not ex.get("beacon") and y1 - y0 < 12 and (x1 - x0) > 4:
+                for _ in range(rng.randint(1, 3)):
+                    ux = rng.uniform(x0 + 1, x1 - 2)
+                    uz = rng.uniform(z0 + 1, z1 - 2)
+                    a = [iso(ux, y1, uz), iso(ux + 1, y1, uz), iso(ux + 1, y1, uz + 1), iso(ux, y1, uz + 1)]
+                    b = [iso(ux, y1 + 0.8, uz), iso(ux + 1, y1 + 0.8, uz), iso(ux + 1, y1 + 0.8, uz + 1), iso(ux, y1 + 0.8, uz + 1)]
+                    poly([a[3], a[2], b[2], b[3]], blend(roof, BLACK, 0.2))
+                    poly([a[2], a[1], b[1], b[2]], blend(roof, BLACK, 0.45))
+                    poly(b, blend(roof, WHITE, 0.15))
+        # beacons
+        self.beacons = []
+        for i, b in enumerate(self.boxes):
+            if b[8] < 0 and self.extras.get(i, {}).get("beacon"):
+                tallest = max((bb for bb in self.boxes if bb[8] == i), key=lambda bb: bb[5], default=b)
+                self.beacons.append(iso((tallest[0] + tallest[2]) / 2, tallest[5] + 0.3, (tallest[1] + tallest[3]) / 2))
+        # quantise to a small palette of tuples per row, ready to slice into the screen
+        q = (np.clip(img, 0, 255).astype(np.int32) >> 2) << 2
+        self.canvas = [[tuple(c) for c in row.tolist()] for row in q]
+        self.key = key
+
+    def canvas_view(self, now, dt):
+        """Pan offset (integer canvas pixels) for this frame."""
+        w, ph = self.w, self.ph
         locked = self.reticles[0]["target"] if self.reticles[0]["lock"] >= 1 else None
-        self.zoom += ((1.0 if locked else 0.0) - self.zoom) * min(1, dt * 1.2)
-        tx, tz = (self.world(locked)[0], self.world(locked)[2]) if locked else (0.0, 0.0)
-        self.focus[0] += (tx - self.focus[0]) * min(1, dt * 1.2)
-        self.focus[1] += (tz - self.focus[1]) * min(1, dt * 1.2)
-        self.orbit += dt * 0.07
+        self.orbit += dt * 0.035
+        # a slow Lissajous drift across the middle of the city
+        ax = (self.Wc - w) / 2
+        ay = (self.Hc - ph) / 2
+        gx = ax + math.sin(self.orbit) * ax * 0.55
+        gy = ay + math.sin(self.orbit * 0.77 + 1.3) * ay * 0.45
+        if locked:
+            tx, ty = self.iso(*self.world(locked))
+            gx, gy = tx - self.cam.cx, ty - self.ph * 0.55
+        k = min(1.0, dt * 0.9)
+        self.view[0] += (gx - self.view[0]) * k
+        self.view[1] += (gy - self.view[1]) * k
+        self.view[0] = max(0.0, min(self.Wc - w - 1.0, self.view[0]))
+        self.view[1] = max(0.0, min(self.Hc - ph - 1.0, self.view[1]))
+        return int(self.view[0]), int(self.view[1])
 
-    def place_camera(self, now):
-        cam = self.cam
-        R = 50 - self.zoom * 8
-        hgt = 30 + math.sin(now * 0.11) * 3 - self.zoom * 4
-        fx, fz = self.focus
-        cam.pos = [fx + math.sin(self.orbit) * R, hgt, fz - math.cos(self.orbit) * R]
-        cam.yaw = math.atan2(fx - cam.pos[0], fz - cam.pos[2])
-        cam.pitch = math.atan2(hgt - 1.0, R) * 0.95
-        cam.roll = 0.0
+    def blit_city(self, s, vx, vy):
+        cv = self.canvas
+        w = self.w
+        for y in range(self.h):
+            s.pt[y] = cv[vy + 2 * y][vx:vx + w]
+            s.pb[y] = cv[vy + 2 * y + 1][vx:vx + w]
+
+    def occluded(self, cx, cy, kobj):
+        """Is canvas pixel (cx, cy) covered by a building standing in front of kobj?"""
+        if 0 <= cy < self.Hc and 0 <= cx < self.Wc:
+            return self.key[cy, cx] > kobj + 0.5
+        return False
+
+    def put_world(self, s, vx, vy, cx, cy, col):
+        x, py = cx - vx, cy - vy
+        if 0 <= x < self.w and 0 <= py < self.ph:
+            (s.pb if py & 1 else s.pt)[py >> 1][x] = col
+
+    def draw_dynamic(self, s, now, vx, vy):
+        iso = self.iso
+        # twinkling windows: a few lights switch per frame
+        if self.win_lights:
+            rnd = random.Random(int(now * 2))
+            for _ in range(min(40, len(self.win_lights) // 30)):
+                x, y, col = self.win_lights[rnd.randrange(len(self.win_lights))]
+                self.put_world(s, vx, vy, x, y, blend(col, BLACK, 0.6) if rnd.random() < 0.5 else WHITE)
+        # cars: head and tail light pairs plus a body pixel
+        for c in self.cars:
+            x, _, z = self.world(c)
+            d = c["dir"]
+            fx, fz = (d, 0) if c["ax"] else (0, d)
+            kobj = x + z
+            body = iso(x, 0.5, z)
+            c["screen"] = ((body[0] - vx), (body[1] - vy) / 2, 0)
+            bx, by = int(round(body[0])), int(round(body[1]))
+            if self.occluded(bx, by, kobj):
+                continue
+            for t in (-0.8, 0.0, 0.8):
+                p = iso(x + fx * t, 0.5, z + fz * t)
+                self.put_world(s, vx, vy, int(round(p[0])), int(round(p[1])), c["col"])
+            h = iso(x + fx * 1.3, 0.5, z + fz * 1.3)
+            tl = iso(x - fx * 1.3, 0.5, z - fz * 1.3)
+            self.put_world(s, vx, vy, int(round(h[0])), int(round(h[1])), (255, 246, 214))
+            brake = c["spd"] < c["v"] * 0.3
+            self.put_world(s, vx, vy, int(round(tl[0])), int(round(tl[1])), (255, 40, 50) if brake else (190, 40, 50))
+        # people
+        marked = {id(r["target"]): r for r in self.reticles if r["target"] is not None}
+        for p in self.peds:
+            x, _, z = self.world(p)
+            foot = iso(x, 0, z)
+            fx_, fy_ = int(round(foot[0])), int(round(foot[1]))
+            p["screen"] = ((foot[0] - vx), (foot[1] - vy - 2) / 2, 0)
+            hid = self.occluded(fx_, fy_ - 2, x + z)
+            p["hidden"] = hid
+            tr = marked.get(id(p))
+            if hid and tr is None:
+                continue
+            body = blend(p["body"], WHITE, 0.25)
+            if tr is not None:
+                hc = self.profile["color"] if tr["lock"] >= 1 else YELLOW
+                hc = blend(BLACK, hc, 0.6 + 0.3 * math.sin(now * 8))
+                for dy in range(-4, 2):
+                    self.put_world(s, vx, vy, fx_ - 1, fy_ + dy, hc)
+                    self.put_world(s, vx, vy, fx_ + 1, fy_ + dy, hc)
+            self.put_world(s, vx, vy, fx_, fy_ - 3, (255, 228, 196))
+            self.put_world(s, vx, vy, fx_, fy_ - 2, body)
+            self.put_world(s, vx, vy, fx_, fy_ - 1, body)
+            self.put_world(s, vx, vy, fx_, fy_, blend(body, BLACK, 0.5) if int(now * 4 + p["pos"]) % 2 else body)
+        # roof beacons
+        if int(now * 1.5) % 2:
+            for bx, by in self.beacons:
+                self.put_world(s, vx, vy, int(round(bx)), int(round(by)), (255, 40, 40))
 
     # ------------------------------------------------------------ overlays
-    def label(self, s, x, y, text, col, bg=PANEL_BG):
+    def label(self, s, x, y, text, col, bg=PANEL_BG, claim=False):
         x = max(0, min(self.w - len(text), x))
+        rect = (x - 1, y, x + len(text) + 1, y + 1)
+        for q in self.lrects:
+            if rect[0] < q[2] and q[0] < rect[2] and rect[1] < q[3] and q[1] < rect[3]:
+                if claim:
+                    break
+                return
+        if claim:
+            self.lrects.append(rect)
         if 0 <= y < self.h:
             s.text(x, y, text, col)
             row = s.bg[y]
@@ -691,7 +617,8 @@ class Mode:
                    and not self.in_card(p["screen"][0], p["screen"][1]) and id(p) not in taken
                    and not (self.mm and p["screen"][0] < self.mm["w"] + 4 and p["screen"][1] < self.mm["h"] + 5)]
         self.link = None
-        for r in self.reticles:
+        self.lrects = []
+        for r in sorted(self.reticles, key=lambda q: not q["primary"]):
             tgt = r["target"]
             lost = tgt is None or not tgt.get("screen") or (r["lock"] < 1 and tgt.get("hidden"))
             if lost or now > r["until"]:
@@ -720,34 +647,53 @@ class Mode:
                     r["until"] = now + 6.5
                 self.primary_reticle(s, now, r, tgt, x, y)
             else:
-                size = int(5 - 2.5 * r["lock"])
-                col = blend(YELLOW, BLACK, 0.15) if r["lock"] < 1 else (200, 200, 120)
-                s.brackets(x - size, y - size // 2 - 1, size * 2 + 1, size + 2, col, arm=1)
+                size = int(round(6 - 3 * r["lock"]))
+                col = blend(YELLOW, BLACK, 0.1) if r["lock"] < 1 else (200, 200, 120)
+                self.bracket_box(s, x, y, size, max(1, size // 2 + 1), col, 1, 0)
                 if r["lock"] >= 1:
-                    self.label(s, x + size + 2, y - 1, tgt["name"].upper(), (210, 210, 220))
-                    self.label(s, x + size + 2, y, "AGE %d // RISK %d%%" % (tgt["age"], hash(tgt["name"]) % 100), GREY)
+                    self.label(s, x + size + 2, y - 1, tgt["name"].upper(), (210, 210, 220), claim=True)
+                    self.label(s, x + size + 2, y, "AGE %d // RISK %d%%" % (tgt["age"], hash(tgt["name"]) % 100), GREY, claim=True)
                 else:
-                    self.label(s, x + size + 2, y, "SCAN %3d%%" % (r["lock"] * 100), YELLOW)
+                    self.label(s, x + size + 2, y, "SCAN %3d%%" % (r["lock"] * 100), YELLOW, claim=True)
+
+    @staticmethod
+    def bracket_box(s, cx, cy, hw, hh, col, arm_x, arm_y):
+        """Crisp corner brackets centred on (cx, cy) with half sizes hw/hh."""
+        for sx, sy, ch in ((-1, -1, "┏"), (1, -1, "┓"), (-1, 1, "┗"), (1, 1, "┛")):
+            x, y = cx + sx * hw, cy + sy * hh
+            s.put(x, y, ch, col)
+            for i in range(1, arm_x + 1):
+                s.put(x - sx * i, y, "━", col)
+            for i in range(1, arm_y + 1):
+                s.put(x, y - sy * i, "┃", col)
 
     def primary_reticle(self, s, now, r, tgt, x, y):
         lock = r["lock"]
-        size = int(9 - 6 * lock)
+        hw = int(round(11 - 7 * lock))          # brackets close in as the lock builds
+        hh = max(2, int(round(hw / 2.2)))
         col = self.profile["color"] if lock >= 1 else YELLOW
-        top, bot = y - size // 2 - 1, y + size // 2 + 1
-        s.brackets(x - size, top, size * 2 + 1, bot - top + 1, col, arm=2 if lock < 1 else 1)
+        top = y - hh
+        self.bracket_box(s, x, y, hw, hh, col, 2 if hw > 5 else 1, 1)
         if lock < 1:
-            # sweep line scanning the subject
-            sy = top + 1 + int((now * 9) % max(1, bot - top - 1))
-            s.tint_row(sy, CYAN, 0.3, x - size + 1, x + size)
-            for dx in (-size - 2, size + 2):
-                s.put(x + dx, y, "─", blend(YELLOW, BLACK, 0.3))
-            s.put(x, top - 1, "│", blend(YELLOW, BLACK, 0.3))
-            self.label(s, x - 7, top - 2, "PROFILING " + "▮" * int(lock * 6) + "▯" * (6 - int(lock * 6)), YELLOW)
+            sy = top + 1 + int((now * 9) % max(1, 2 * hh - 1))
+            s.tint_row(sy, CYAN, 0.35, x - hw + 1, x + hw)
+            dim = blend(YELLOW, BLACK, 0.3)
+            for dx in (-hw - 3, hw + 3):
+                s.put(x + dx, y, "─", dim)
+                s.put(x + dx + (1 if dx < 0 else -1), y, "─", dim)
+            s.put(x, top - 2, "│", dim)
+            n = int(lock * 6)
+            self.lrects.append((x - hw - 1, top - 3, x + hw + 2, y + hh + 1))
+            self.label(s, x - 7, top - 3, "ACQUIRING " + "█" * n + "░" * (6 - n), YELLOW, claim=True)
         else:
-            s.put(x, top - 1, "▼", col)
+            pulse = 0.55 + 0.45 * math.sin(now * 7)
+            s.put(x, top - 2, "▼", blend(col, WHITE, 0.3 * pulse))
+            for dx in (-hw - 2, hw + 2):
+                s.put(x + dx, y, "◆", col)
             name = tgt["name"].upper()
-            self.label(s, x - len(name) // 2, top - 2, name, WHITE)
-            self.link = (x + size + 1, y, col)
+            self.lrects.append((x - hw - 1, top - 3, x + hw + 2, y + hh + 1))
+            self.label(s, x - len(name) // 2, top - 3, " " + name + " ", WHITE, blend(col, BLACK, 0.7), claim=True)
+            self.link = (x + hw + 3, y, col)
 
     def draw_link(self, s, now):
         if not self.link or not self.card_rect:
@@ -763,8 +709,11 @@ class Mode:
         head = int(now * 30) % max(1, len(pts))
         for i, (x, y) in enumerate(pts):
             k = (head - i) % len(pts)
-            c = blend(WHITE, col, k / 3) if k < 3 else blend(col, BLACK, 0.45)
-            s.put(x, y, "·" if k >= 3 else "•", c)
+            horiz = i == 0 or pts[i - 1][1] == y == (pts[i + 1][1] if i + 1 < len(pts) else y)
+            if k < 3:
+                s.put(x, y, "●", blend(WHITE, col, k / 3))
+            else:
+                s.put(x, y, "━" if horiz else "•", blend(col, BLACK, 0.2))
         s.put(x1, y1, "◆", col)
 
     def draw_minimap(self, s, now):
@@ -781,15 +730,18 @@ class Mode:
         for c in self.cars:
             x, _, z = self.world(c)
             s.pixel(*mp(x, z), (150, 130, 60))
-        cam = self.cam
-        cxp, czp = mp(cam.pos[0], cam.pos[2])
-        for da in (-0.6, 0.6):
-            a = cam.yaw + da
-            ex, ez = mp(cam.pos[0] + math.sin(a) * 26, cam.pos[2] + math.cos(a) * 26)
-            for x, y in line_points(cxp, czp, ex, ez):
+        # the area currently on screen (screen corners back-projected to the ground)
+        K = self.K
+        vx, vy = self.view
+        pts = []
+        for sx, sy in ((0, 0), (self.w, 0), (self.w, self.ph), (0, self.ph)):
+            a = (vx + sx - self.iox) / K
+            b = (vy + sy - self.ioy) / (K * 0.5)
+            pts.append(mp((a + b) / 2, (b - a) / 2))
+        for (ax_, ay_), (bx_, by_) in zip(pts, pts[1:] + pts[:1]):
+            for x, y in line_points(ax_, ay_, bx_, by_):
                 if ix <= x < ix + mm["w"] - 2 and iy <= y < iy + (mm["h"] - 2) * 2:
-                    s.pixel(x, y, (120, 40, 80))
-        s.pixel(cxp, czp, PINK)
+                    s.pixel(x, y, (150, 50, 100))
         for r in self.reticles:
             if r["target"] is not None:
                 x, _, z = self.world(r["target"])
@@ -920,20 +872,12 @@ class Mode:
         if now - self.started > 14:
             self.new_profile(now)        # nobody visible for a while: keep the card alive
 
-        self.update_camera(now, dt)
         self.update_traffic(now, dt)
-        stamp = int(now * 8)
-        if stamp != self.city_stamp or self.city_frame is None:
-            self.place_camera(now)
-            self.draw_world(s, now)
-            self.city_frame = (s.snapshot(), self.ids, self.bdepth, self.beacons)
-            self.city_stamp = stamp
-        else:
-            snap, self.ids, self.bdepth, self.beacons = self.city_frame
-            s.restore(snap)
-            self.rows = [layer[py >> 1] for py in range(self.ph) for layer in ((s.pt, s.pb)[py & 1],)]
-        self.draw_traffic(s, now)
+        vx, vy = self.canvas_view(now, dt)
+        self.blit_city(s, vx, vy)
+        self.draw_dynamic(s, now, vx, vy)
         self.draw_reticles(s, now)
+        self.lrects = []
         self.draw_minimap(s, now)
         self.draw_link(s, now)
         self.draw_card(s, now)
